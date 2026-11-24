@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-> **Status:** v1 Spatial Context tools (`get_build_context`, `scan_volume`) & unified error envelope implemented over Streamable HTTP at `http://127.0.0.1:25580/mcp` (override port with `-Darchica.mcp.port=<port>`); Blueprint & Litematica tools are planned for follow-up slices.
+> **Status:** v1 Spatial Context (`get_build_context`, `scan_volume`) & Blueprint Draft Session tools (`blueprint_create`..`blueprint_list`) implemented over Streamable HTTP at `http://127.0.0.1:25580/mcp` (override port with `-Darchica.mcp.port=<port>`); Litematica Compilation & Placement tools (`blueprint_compile`, `blueprint_clear_placement`) are planned for `litematica-compiler`.
 
 Archica MCP exposes 11 tools grouped into **Spatial Context** (reading player surroundings) and **Stateful Blueprints & Litematica Activation** (drafting, refining, and compiling `.litematic` holograms).
 
@@ -309,14 +309,14 @@ All tools return structured MCP errors (`isError = true`) with a machine-readabl
 | `NO_WORLD_LOADED` | `client.world` or `client.player` is null when a world-reading or placement tool is called. |
 | `INVALID_RADIUS` | Requested `get_build_context` `radius` is outside `4..24`. |
 | `INVALID_BOUNDS` | Requested `scan_volume` `min[i] > max[i]` on any axis. |
-| `VOLUME_TOO_LARGE` | Requested `scan_volume` exceeds the maximum allowed voxel cap (`13,824` blocks). |
+| `VOLUME_TOO_LARGE` | Requested `scan_volume` (`13,824` blocks) or blueprint rasterization enclosing volume (`131,072` blocks) exceeds the safety cap. |
 | `INVALID_ARGUMENTS` | Required MCP tool arguments are missing or have invalid JSON types/shapes. |
 | `CLIENT_TIMEOUT` | Main-thread world dispatch exceeded its bounded timeout (default `5,000ms`). |
 | `INTERNAL_ERROR` | Unexpected unhandled error while executing an MCP tool. |
-| `BLUEPRINT_EXISTS` | *(Planned)* `blueprint_create` called for an existing `blueprint_id` with `overwrite=false`. |
-| `BLUEPRINT_NOT_FOUND` | *(Planned)* Operation targets an unknown `blueprint_id`. |
-| `OP_NOT_FOUND` | *(Planned)* `blueprint_update_op` or `blueprint_remove_op` references a missing `op_id`. |
-| `INVALID_BLOCK_ID` | *(Planned)* A primitive references an unknown block identifier or invalid blockstate property. |
+| `BLUEPRINT_EXISTS` | `blueprint_create` called for an existing `blueprint_id` with `overwrite=false`. |
+| `BLUEPRINT_NOT_FOUND` | Operation targets an unknown `blueprint_id`. |
+| `OP_NOT_FOUND` | `blueprint_update_op` or `blueprint_remove_op` references a missing `op_id`. |
+| `INVALID_BLOCK_ID` | A primitive references an unknown block identifier or invalid blockstate property. |
 | `LITEMATICA_UNAVAILABLE` | *(Planned)* Litematica / MaLiLib failed to initialize or placement registration threw an adapter error (the `.litematic` file path is still reported if written). |
 
 ---

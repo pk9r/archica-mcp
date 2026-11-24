@@ -1,6 +1,6 @@
 # Stateful Blueprints & Building Primitives
 
-> **Status:** Planned v1 Specification — defines the in-memory blueprint session model, coordinate system, auto-orientation rules, and building primitives catalog.
+> **Status:** v1 Draft Engine & Primitives Implemented (`blueprint_create`..`blueprint_list`, forward-aligned facing transforms, `BlockCatalog` auto-orientation, and 11 v1 primitives); `.litematic` NBT export & Litematica placement (`blueprint_compile`, `blueprint_clear_placement`) are planned for `litematica-compiler`.
 
 Rather than forcing an AI agent to emit thousands of individual `set_block` calls or regenerate an entire build from scratch on every feedback turn, Archica MCP uses **stateful in-memory blueprint sessions** driven by composable **building primitives**.
 
@@ -32,8 +32,9 @@ Each blueprint lives in memory as an ordered list of primitive operations attach
 - **`blueprint_id`**: Unique slug (e.g., `oak_cottage`), also used as the `.litematic` filename (`<blueprint_id>.litematic`).
 - **`origin`**: World `(x, y, z)` anchor corresponding to local `(0, 0, 0)`.
 - **`facing`**: Cardinal orientation (`NORTH`, `SOUTH`, `EAST`, `WEST`, default `NORTH`) defining the blueprint's local `+Z` / `+X` forward axis.
-- **`ops`**: Ordered list of operations, each assigned a stable `op_id` (`op_1`, `op_2`, ...) for targeted updates or removal.
+- **`ops`**: Ordered list of operations, each assigned a monotonically increasing `op_id` (`op_1`, `op_2`, ..., never reused after removal or undo) for targeted updates or removal.
 - **Evaluation order**: Operations rasterize sequentially from `op_1` to `op_N`, so later primitives (e.g., `clear_box` or `replace_box` for windows and doors) naturally carve into or override earlier walls and floors.
+- **Safety cap**: Rasterization enforces a maximum enclosing bounding box of `131,072` blocks (`VOLUME_TOO_LARGE`).
 
 ---
 
@@ -41,7 +42,7 @@ Each blueprint lives in memory as an ordered list of primitive operations attach
 
 All primitive coordinates use **anchor-relative local space** centered at `(0, 0, 0)`:
 - **`+Y`**: Upward (elevation).
-- **`+Z` (local forward)** / **`+X` (local right)**: Rotated around `(0, 0, 0)` according to the blueprint's `facing` when compiling to world/schematic coordinates (`NORTH` = identity orientation or configurable canonical mapping).
+- **`+Z` (local forward)** / **`+X` (local right)**: Forward-aligned local space rotated around `(0, 0, 0)` according to `facing` when mapping to world/schematic coordinates (`NORTH` -> `-Z` forward / `+X` right; `EAST` -> `+X` forward / `+Z` right; `SOUTH` -> `+Z` forward / `-X` right; `WEST` -> `-X` forward / `-Z` right), rotating directional blockstate properties (`facing`, `axis`) accordingly.
 - **Inclusive bounds**: Box ranges `from`..`to` are inclusive on both endpoints regardless of min/max ordering (normalized internally as `[min(a,b), max(a,b)]`).
 
 ---
@@ -73,7 +74,7 @@ Every operation in `blueprint_add_ops` / `blueprint_update_op` specifies a `type
 | `staircase` | `from: [x,y,z]`, `to: [x,y,z]`, `block: string`, `width?: int = 1`, `fill_under?: bool = false` | Builds an ascending flight of stairs from `from` to `to`, orienting `stairs` `facing` along the climb direction and optionally filling support blocks underneath. |
 | `replace_box` | `from: [x,y,z]`, `to: [x,y,z]`, `target: string`, `replacement: string` | Replaces every voxel matching `target` inside the inclusive box with `replacement` (ideal for swapping wall palettes or turning solid blocks into windows). |
 | `clear_box` | `from: [x,y,z]`, `to: [x,y,z]` | Sets all voxels inside the inclusive box to `minecraft:air` (shortcut for cutting doorways, archways, and interior rooms). |
-| `repeat_pattern` | `op: PrimitiveOp`, `count: int`, `step: [dx,dy,dz]` | Evaluates `op` `count` times, offsetting all coordinates by `i * step` for `i in 0 until count` (ideal for fence posts, colonnades, ribs, and repeated windows). |
+| `repeat_pattern` | `op: PrimitiveOp`, `count: int`, `step: [dx,dy,dz]` | Evaluates `op` `count` times (`1..256`, max nesting depth `4`), offsetting all coordinates by `i * step` for `i in 0 until count` (ideal for fence posts, colonnades, ribs, and repeated windows). |
 
 ---
 

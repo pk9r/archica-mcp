@@ -1,6 +1,7 @@
 package com.archica.mcp.server
 
 import com.archica.mcp.ArchicaModInfo
+import com.archica.mcp.blueprint.BlueprintService
 import io.ktor.server.cio.CIO
 import io.ktor.server.cio.CIOApplicationEngine
 import io.ktor.server.engine.EmbeddedServer
@@ -12,13 +13,15 @@ import io.modelcontextprotocol.kotlin.sdk.types.Implementation
 import io.modelcontextprotocol.kotlin.sdk.types.ServerCapabilities
 import io.modelcontextprotocol.kotlin.sdk.types.ToolAnnotations
 import io.modelcontextprotocol.kotlin.sdk.types.ToolSchema
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import org.slf4j.LoggerFactory
 
 /**
- * Factory for configuring the Archica MCP [Server] instance and registering v1 spatial context tools.
+ * Factory for configuring the Archica MCP [Server] instance and registering spatial context + blueprint tools.
  */
 object ArchicaMcpServerFactory {
     private val getBuildContextSchema = ToolSchema(
@@ -35,20 +38,8 @@ object ArchicaMcpServerFactory {
 
     private val scanVolumeSchema = ToolSchema(
         properties = buildJsonObject {
-            putJsonObject("min") {
-                put("type", "array")
-                putJsonObject("items") { put("type", "integer") }
-                put("minItems", 3)
-                put("maxItems", 3)
-                put("description", "Minimum world [x, y, z] corner of the bounding box.")
-            }
-            putJsonObject("max") {
-                put("type", "array")
-                putJsonObject("items") { put("type", "integer") }
-                put("minItems", 3)
-                put("maxItems", 3)
-                put("description", "Maximum world [x, y, z] corner of the bounding box.")
-            }
+            putInt3Array("min", "Minimum world [x, y, z] corner of the bounding box.")
+            putInt3Array("max", "Maximum world [x, y, z] corner of the bounding box.")
             putJsonObject("include_states") {
                 put("type", "boolean")
                 put("default", false)
@@ -58,6 +49,104 @@ object ArchicaMcpServerFactory {
         required = listOf("min", "max"),
     )
 
+    private val blueprintCreateSchema = ToolSchema(
+        properties = buildJsonObject {
+            putBlueprintIdProperty()
+            putInt3Array("origin", "World [x, y, z] anchor corresponding to blueprint local (0, 0, 0).")
+            putJsonObject("facing") {
+                put("type", "string")
+                putJsonArray("enum") {
+                    add("NORTH")
+                    add("SOUTH")
+                    add("EAST")
+                    add("WEST")
+                }
+                put("default", "NORTH")
+                put("description", "Cardinal forward orientation for local +Z axis.")
+            }
+            putJsonObject("overwrite") {
+                put("type", "boolean")
+                put("default", false)
+                put("description", "Replace an existing draft session with the same blueprint_id.")
+            }
+        },
+        required = listOf("blueprint_id", "origin"),
+    )
+
+    private val blueprintAddOpsSchema = ToolSchema(
+        properties = buildJsonObject {
+            putBlueprintIdProperty()
+            putJsonObject("ops") {
+                put("type", "array")
+                put("minItems", 1)
+                putJsonObject("items") {
+                    put("type", "object")
+                    putJsonArray("required") { add("type") }
+                    putJsonObject("properties") {
+                        putJsonObject("type") {
+                            put("type", "string")
+                            putJsonArray("enum") {
+                                listOf(
+                                    "set_block", "fill_box", "hollow_box", "line",
+                                    "cylinder", "dome", "gable_roof", "staircase",
+                                    "replace_box", "clear_box", "repeat_pattern",
+                                ).forEach { add(it) }
+                            }
+                        }
+                    }
+                    put("additionalProperties", true)
+                }
+            }
+        },
+        required = listOf("blueprint_id", "ops"),
+    )
+
+    private val blueprintUpdateOpSchema = ToolSchema(
+        properties = buildJsonObject {
+            putBlueprintIdProperty()
+            putJsonObject("op_id") { put("type", "string") }
+            putJsonObject("op") {
+                put("type", "object")
+                putJsonArray("required") { add("type") }
+                put("additionalProperties", true)
+            }
+        },
+        required = listOf("blueprint_id", "op_id", "op"),
+    )
+
+    private val blueprintRemoveOpSchema = ToolSchema(
+        properties = buildJsonObject {
+            putBlueprintIdProperty()
+            putJsonObject("op_id") { put("type", "string") }
+        },
+        required = listOf("blueprint_id", "op_id"),
+    )
+
+    private val blueprintUndoSchema = ToolSchema(
+        properties = buildJsonObject {
+            putBlueprintIdProperty()
+            putJsonObject("count") {
+                put("type", "integer")
+                put("minimum", 1)
+                put("default", 1)
+            }
+        },
+        required = listOf("blueprint_id"),
+    )
+
+    private val blueprintInspectSchema = ToolSchema(
+        properties = buildJsonObject {
+            putBlueprintIdProperty()
+            putJsonObject("include_ops") {
+                put("type", "boolean")
+                put("default", true)
+            }
+        },
+        required = listOf("blueprint_id"),
+    )
+
+    private val blueprintListSchema = ToolSchema(properties = buildJsonObject {})
+
     private val readOnlyAnnotations = ToolAnnotations(
         readOnlyHint = true,
         destructiveHint = false,
@@ -65,8 +154,16 @@ object ArchicaMcpServerFactory {
         openWorldHint = false,
     )
 
+    private val draftMutationAnnotations = ToolAnnotations(
+        readOnlyHint = false,
+        destructiveHint = false,
+        idempotentHint = false,
+        openWorldHint = false,
+    )
+
     fun create(
         spatialContext: SpatialContextService,
+        blueprintService: BlueprintService,
         serverVersion: String = "0.1.0",
     ): Server {
         val server = Server(
@@ -105,7 +202,108 @@ object ArchicaMcpServerFactory {
             }
         }
 
+        server.addTool(
+            name = "blueprint_create",
+            description = "Creates or resets a named in-memory blueprint draft session anchored at world origin.",
+            inputSchema = blueprintCreateSchema,
+            toolAnnotations = draftMutationAnnotations,
+        ) { request ->
+            McpToolExecutor.execute {
+                val parsed = BlueprintToolCodec.parseCreate(request.arguments)
+                BlueprintToolCodec.formatCreate(blueprintService.create(parsed))
+            }
+        }
+
+        server.addTool(
+            name = "blueprint_add_ops",
+            description = "Appends composable building primitives to a draft blueprint and returns op_ids, bounds, and material summary.",
+            inputSchema = blueprintAddOpsSchema,
+            toolAnnotations = draftMutationAnnotations,
+        ) { request ->
+            McpToolExecutor.execute {
+                val parsed = BlueprintToolCodec.parseAddOps(request.arguments)
+                BlueprintToolCodec.formatMutation(blueprintService.addOps(parsed.blueprintId, parsed.ops))
+            }
+        }
+
+        server.addTool(
+            name = "blueprint_update_op",
+            description = "Replaces an existing primitive operation in place by op_id while preserving evaluation order.",
+            inputSchema = blueprintUpdateOpSchema,
+            toolAnnotations = draftMutationAnnotations,
+        ) { request ->
+            McpToolExecutor.execute {
+                val parsed = BlueprintToolCodec.parseUpdateOp(request.arguments)
+                BlueprintToolCodec.formatMutation(blueprintService.updateOp(parsed.blueprintId, parsed.opId, parsed.op))
+            }
+        }
+
+        server.addTool(
+            name = "blueprint_remove_op",
+            description = "Removes a single primitive operation by op_id from a draft blueprint session.",
+            inputSchema = blueprintRemoveOpSchema,
+            toolAnnotations = draftMutationAnnotations,
+        ) { request ->
+            McpToolExecutor.execute {
+                val parsed = BlueprintToolCodec.parseRemoveOp(request.arguments)
+                BlueprintToolCodec.formatMutation(blueprintService.removeOp(parsed.blueprintId, parsed.opId))
+            }
+        }
+
+        server.addTool(
+            name = "blueprint_undo",
+            description = "Removes the most recent count primitive operations from a draft blueprint session.",
+            inputSchema = blueprintUndoSchema,
+            toolAnnotations = draftMutationAnnotations,
+        ) { request ->
+            McpToolExecutor.execute {
+                val parsed = BlueprintToolCodec.parseUndo(request.arguments)
+                BlueprintToolCodec.formatMutation(blueprintService.undo(parsed.blueprintId, parsed.count))
+            }
+        }
+
+        server.addTool(
+            name = "blueprint_inspect",
+            description = "Inspects active operations, local/world bounding boxes, material counts, and survival checks without writing to disk.",
+            inputSchema = blueprintInspectSchema,
+            toolAnnotations = readOnlyAnnotations,
+        ) { request ->
+            McpToolExecutor.execute {
+                val parsed = BlueprintToolCodec.parseInspect(request.arguments)
+                BlueprintToolCodec.formatInspect(blueprintService.inspect(parsed.blueprintId, parsed.includeOps))
+            }
+        }
+
+        server.addTool(
+            name = "blueprint_list",
+            description = "Lists all active in-memory blueprint draft sessions and active placement status.",
+            inputSchema = blueprintListSchema,
+            toolAnnotations = readOnlyAnnotations,
+        ) {
+            McpToolExecutor.execute {
+                BlueprintToolCodec.formatList(blueprintService.list())
+            }
+        }
+
         return server
+    }
+
+    private fun kotlinx.serialization.json.JsonObjectBuilder.putBlueprintIdProperty() {
+        putJsonObject("blueprint_id") {
+            put("type", "string")
+            put("pattern", "^[a-z0-9_-]{1,48}$")
+            put("description", "Blueprint session slug.")
+        }
+    }
+
+    private fun kotlinx.serialization.json.JsonObjectBuilder.putInt3Array(name: String, description: String) {
+        putJsonObject(name) {
+            put("type", "array")
+            putJsonObject("items") { put("type", "integer") }
+            put("minItems", 3)
+            put("maxItems", 3)
+            put("description", description)
+        }
     }
 }
 
@@ -114,6 +312,7 @@ object ArchicaMcpServerFactory {
  */
 class ArchicaEmbeddedMcpServer(
     private val spatialContext: SpatialContextService,
+    private val blueprintService: BlueprintService,
     private val host: String = ArchicaModInfo.DEFAULT_MCP_HOST,
     private val port: Int = McpPortConfig.resolvePort(),
     private val path: String = ArchicaModInfo.DEFAULT_MCP_PATH,
@@ -138,7 +337,7 @@ class ArchicaEmbeddedMcpServer(
                 path = path,
                 enableDnsRebindingProtection = true,
             ) {
-                ArchicaMcpServerFactory.create(spatialContext, serverVersion)
+                ArchicaMcpServerFactory.create(spatialContext, blueprintService, serverVersion)
             }
         }
         return try {

@@ -1,5 +1,8 @@
 package com.archica.mcp
 
+import com.archica.mcp.blueprint.BlueprintService
+import com.archica.mcp.blueprint.ClientBlockCatalog
+import com.archica.mcp.blueprint.SurvivalSnapshotProvider
 import com.archica.mcp.context.BuildContextRequest
 import com.archica.mcp.context.BuildContextResult
 import com.archica.mcp.context.ClientThreadDispatcher
@@ -48,8 +51,14 @@ object ArchicaMcpClient : ClientModInitializer {
                 dispatcher.scanVolume(request)
         }
 
+        val blueprintService = BlueprintService(
+            catalog = ClientBlockCatalog(),
+            survivalProvider = SurvivalSnapshotProvider { dispatcher.readSurvivalSnapshotOrNull() },
+        )
+
         val server = ArchicaEmbeddedMcpServer(
             spatialContext = spatialService,
+            blueprintService = blueprintService,
             port = port,
             serverVersion = version,
         )

@@ -1,9 +1,14 @@
 package com.archica.mcp.server
 
 import com.archica.mcp.ArchicaModInfo
+import com.archica.mcp.blueprint.BlueprintErrorCode
+import com.archica.mcp.blueprint.BlueprintException
+import com.archica.mcp.blueprint.PrimitiveOp
+import com.archica.mcp.blueprint.RidgeAxis
 import com.archica.mcp.context.BlockPos3i
 import com.archica.mcp.context.BuildContextRequest
 import com.archica.mcp.context.BuildContextResult
+import com.archica.mcp.context.CardinalDirection
 import com.archica.mcp.context.ContextCompressionException
 import com.archica.mcp.context.ContextErrorCode
 import com.archica.mcp.context.ScanVolumeRequest
@@ -161,6 +166,90 @@ class McpServerCoreTest {
             error("boom")
         }
         assertErrorEnvelope(internal, McpErrorCode.INTERNAL_ERROR, "boom")
+
+        val blueprintErrors = listOf(
+            BlueprintErrorCode.BLUEPRINT_EXISTS to McpErrorCode.BLUEPRINT_EXISTS,
+            BlueprintErrorCode.BLUEPRINT_NOT_FOUND to McpErrorCode.BLUEPRINT_NOT_FOUND,
+            BlueprintErrorCode.OP_NOT_FOUND to McpErrorCode.OP_NOT_FOUND,
+            BlueprintErrorCode.INVALID_BLOCK_ID to McpErrorCode.INVALID_BLOCK_ID,
+            BlueprintErrorCode.VOLUME_TOO_LARGE to McpErrorCode.VOLUME_TOO_LARGE,
+            BlueprintErrorCode.INVALID_ARGUMENTS to McpErrorCode.INVALID_ARGUMENTS,
+        )
+        for ((bpCode, mcpCode) in blueprintErrors) {
+            val res = McpToolExecutor.execute { throw BlueprintException(bpCode, bpCode.name) }
+            assertErrorEnvelope(res, mcpCode, bpCode.name)
+        }
+    }
+
+    @Test
+    fun `blueprint tool codec parses create and all primitive variants`() {
+        val created = BlueprintToolCodec.parseCreate(
+            buildJsonObject {
+                put("blueprint_id", "oak_cottage")
+                put("origin", buildJsonArray { add(JsonPrimitive(10)); add(JsonPrimitive(64)); add(JsonPrimitive(-5)) })
+                put("facing", "east")
+                put("overwrite", true)
+            },
+        )
+        assertEquals("oak_cottage", created.blueprintId)
+        assertEquals(CardinalDirection.EAST, created.facing)
+        assertTrue(created.overwrite)
+
+        val addOps = BlueprintToolCodec.parseAddOps(
+            buildJsonObject {
+                put("blueprint_id", "oak_cottage")
+                put(
+                    "ops",
+                    buildJsonArray {
+                        add(
+                            buildJsonObject {
+                                put("type", "gable_roof")
+                                put("from", buildJsonArray { add(JsonPrimitive(0)); add(JsonPrimitive(4)); add(JsonPrimitive(0)) })
+                                put("to", buildJsonArray { add(JsonPrimitive(6)); add(JsonPrimitive(4)); add(JsonPrimitive(8)) })
+                                put("block", "minecraft:oak_stairs")
+                                put("ridge_axis", "z")
+                            },
+                        )
+                        add(
+                            buildJsonObject {
+                                put("type", "repeat_pattern")
+                                put("count", 3)
+                                put("step", buildJsonArray { add(JsonPrimitive(2)); add(JsonPrimitive(0)); add(JsonPrimitive(0)) })
+                                put(
+                                    "op",
+                                    buildJsonObject {
+                                        put("type", "set_block")
+                                        put("pos", buildJsonArray { add(JsonPrimitive(0)); add(JsonPrimitive(1)); add(JsonPrimitive(0)) })
+                                        put("block", "minecraft:oak_log")
+                                    },
+                                )
+                            },
+                        )
+                    },
+                )
+            },
+        )
+        assertEquals(2, addOps.ops.size)
+        val roof = addOps.ops[0] as PrimitiveOp.GableRoof
+        assertEquals(RidgeAxis.Z, roof.ridgeAxis)
+        assertEquals(1, roof.overhang)
+        assertTrue(addOps.ops[1] is PrimitiveOp.RepeatPattern)
+    }
+
+    @Test
+    fun `blueprint tool codec rejects invalid facing and unknown primitive type`() {
+        assertFailsWith<InvalidToolArgumentsException> {
+            BlueprintToolCodec.parseCreate(
+                buildJsonObject {
+                    put("blueprint_id", "bad")
+                    put("origin", buildJsonArray { add(JsonPrimitive(0)); add(JsonPrimitive(64)); add(JsonPrimitive(0)) })
+                    put("facing", "UP")
+                },
+            )
+        }
+        assertFailsWith<InvalidToolArgumentsException> {
+            BlueprintToolCodec.parsePrimitiveOp(buildJsonObject { put("type", "pyramid") })
+        }
     }
 
     @Test

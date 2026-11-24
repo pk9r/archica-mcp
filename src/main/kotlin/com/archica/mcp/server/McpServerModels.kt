@@ -1,6 +1,8 @@
 package com.archica.mcp.server
 
 import com.archica.mcp.ArchicaModInfo
+import com.archica.mcp.blueprint.BlueprintErrorCode
+import com.archica.mcp.blueprint.BlueprintException
 import com.archica.mcp.context.BuildContextRequest
 import com.archica.mcp.context.BuildContextResult
 import com.archica.mcp.context.BuildContextScanner
@@ -75,6 +77,10 @@ enum class McpErrorCode {
     VOLUME_TOO_LARGE,
     INVALID_ARGUMENTS,
     CLIENT_TIMEOUT,
+    BLUEPRINT_EXISTS,
+    BLUEPRINT_NOT_FOUND,
+    OP_NOT_FOUND,
+    INVALID_BLOCK_ID,
     INTERNAL_ERROR,
     ;
 
@@ -84,6 +90,15 @@ enum class McpErrorCode {
             ContextErrorCode.INVALID_RADIUS -> INVALID_RADIUS
             ContextErrorCode.INVALID_BOUNDS -> INVALID_BOUNDS
             ContextErrorCode.VOLUME_TOO_LARGE -> VOLUME_TOO_LARGE
+        }
+
+        fun fromBlueprintError(code: BlueprintErrorCode): McpErrorCode = when (code) {
+            BlueprintErrorCode.BLUEPRINT_EXISTS -> BLUEPRINT_EXISTS
+            BlueprintErrorCode.BLUEPRINT_NOT_FOUND -> BLUEPRINT_NOT_FOUND
+            BlueprintErrorCode.OP_NOT_FOUND -> OP_NOT_FOUND
+            BlueprintErrorCode.INVALID_BLOCK_ID -> INVALID_BLOCK_ID
+            BlueprintErrorCode.VOLUME_TOO_LARGE -> VOLUME_TOO_LARGE
+            BlueprintErrorCode.INVALID_ARGUMENTS -> INVALID_ARGUMENTS
         }
     }
 }
@@ -131,6 +146,8 @@ object McpToolExecutor {
         successResult(block())
     } catch (e: InvalidToolArgumentsException) {
         errorResult(McpErrorCode.INVALID_ARGUMENTS, e.message)
+    } catch (e: BlueprintException) {
+        errorResult(McpErrorCode.fromBlueprintError(e.code), e.message)
     } catch (e: ContextCompressionException) {
         errorResult(McpErrorCode.fromContextError(e.code), e.message)
     } catch (e: TimeoutCancellationException) {

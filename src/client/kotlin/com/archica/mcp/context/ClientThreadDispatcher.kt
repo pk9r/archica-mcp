@@ -1,5 +1,6 @@
 package com.archica.mcp.context
 
+import com.archica.mcp.blueprint.SurvivalInventorySnapshot
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeout
 import net.minecraft.client.Minecraft
@@ -20,6 +21,20 @@ class ClientThreadDispatcher(
         runOnClientThread {
             VolumeScanner(ClientWorldContextSource(client)).scan(request)
         }
+
+    /** Reads player game mode and inventory on the client thread, or returns null when no world is loaded. */
+    suspend fun readSurvivalSnapshotOrNull(): SurvivalInventorySnapshot? {
+        if (client.level == null || client.player == null) return null
+        return runCatching {
+            runOnClientThread {
+                val source = ClientWorldContextSource(client)
+                SurvivalInventorySnapshot(
+                    gameMode = source.getPlayerSnapshot().gameMode,
+                    inventory = source.getInventoryMaterials(),
+                )
+            }
+        }.getOrNull()
+    }
 
     suspend fun <T> runOnClientThread(timeoutMs: Long = defaultTimeoutMs, block: () -> T): T {
         if (client.isSameThread) {
