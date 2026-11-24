@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-> **Status:** v1 Spatial Context (`get_build_context`, `scan_volume`) & Blueprint Draft Session tools (`blueprint_create`..`blueprint_list`) implemented over Streamable HTTP at `http://127.0.0.1:25580/mcp` (override port with `-Darchica.mcp.port=<port>`); Litematica Compilation & Placement tools (`blueprint_compile`, `blueprint_clear_placement`) are planned for `litematica-compiler`.
+> **Status:** All 11 v1 Spatial Context, Blueprint Draft Session, and Litematica Compilation & Placement tools are implemented over Streamable HTTP at `http://127.0.0.1:25580/mcp` (override port with `-Darchica.mcp.port=<port>`).
 
 Archica MCP exposes 11 tools grouped into **Spatial Context** (reading player surroundings) and **Stateful Blueprints & Litematica Activation** (drafting, refining, and compiling `.litematic` holograms).
 
@@ -238,7 +238,7 @@ Lists all active blueprint sessions in memory and whether each currently has an 
 ## 4. Compilation & Litematica Tools
 
 ### `blueprint_compile`
-Rasterizes the blueprint, writes `.minecraft/schematics/archica/<blueprint_id>.litematic`, and—when `activate=true`—loads and places it in Litematica (replacing any prior placement associated with `blueprint_id`).
+Rasterizes the blueprint, writes `<schematicsBaseDir>/archica/<blueprint_id>.litematic` (supporting `activate = false` even when no world is loaded; rejecting empty blueprints with `INVALID_ARGUMENTS`), and—when `activate=true`—loads and places it in Litematica at `world_origin` (`worldBounds.min`, shifted by `origin_override` when supplied), replacing any prior `archica:<blueprint_id>` placement.
 
 **Input Schema:**
 ```json
@@ -246,7 +246,7 @@ Rasterizes the blueprint, writes `.minecraft/schematics/archica/<blueprint_id>.l
   "type": "object",
   "required": ["blueprint_id"],
   "properties": {
-    "blueprint_id": { "type": "string" },
+    "blueprint_id": { "type": "string", "pattern": "^[a-z0-9_-]{1,48}$" },
     "activate": { "type": "boolean", "default": true },
     "origin_override": { "type": "array", "items": { "type": "integer" }, "minItems": 3, "maxItems": 3 }
   }
@@ -260,7 +260,7 @@ Rasterizes the blueprint, writes `.minecraft/schematics/archica/<blueprint_id>.l
   "schematic_path": "schematics/archica/oak_cottage.litematic",
   "activated": true,
   "replaced_existing_placement": true,
-  "world_origin": [124, 65, -52],
+  "world_origin": [123, 65, -62],
   "enclosing_size": [11, 8, 11],
   "total_blocks": 342,
   "survival_check": {
@@ -275,7 +275,7 @@ Rasterizes the blueprint, writes `.minecraft/schematics/archica/<blueprint_id>.l
 ---
 
 ### `blueprint_clear_placement`
-Removes the active Litematica placement tagged for `blueprint_id`.
+Removes the active Litematica placement tagged `archica:<blueprint_id>` and optionally deletes its `.litematic` file.
 
 **Input Schema:**
 ```json
@@ -283,9 +283,18 @@ Removes the active Litematica placement tagged for `blueprint_id`.
   "type": "object",
   "required": ["blueprint_id"],
   "properties": {
-    "blueprint_id": { "type": "string" },
+    "blueprint_id": { "type": "string", "pattern": "^[a-z0-9_-]{1,48}$" },
     "delete_file": { "type": "boolean", "default": false }
   }
+}
+```
+
+**Example Output:**
+```json
+{
+  "blueprint_id": "oak_cottage",
+  "cleared": true,
+  "deleted_file": false
 }
 ```
 
@@ -317,7 +326,7 @@ All tools return structured MCP errors (`isError = true`) with a machine-readabl
 | `BLUEPRINT_NOT_FOUND` | Operation targets an unknown `blueprint_id`. |
 | `OP_NOT_FOUND` | `blueprint_update_op` or `blueprint_remove_op` references a missing `op_id`. |
 | `INVALID_BLOCK_ID` | A primitive references an unknown block identifier or invalid blockstate property. |
-| `LITEMATICA_UNAVAILABLE` | *(Planned)* Litematica / MaLiLib failed to initialize or placement registration threw an adapter error (the `.litematic` file path is still reported if written). |
+| `LITEMATICA_UNAVAILABLE` | Litematica / MaLiLib failed to initialize or placement registration/clearance threw an adapter error (the `.litematic` file path is included in the error message if already written). |
 
 ---
 

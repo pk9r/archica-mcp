@@ -147,6 +147,31 @@ object ArchicaMcpServerFactory {
 
     private val blueprintListSchema = ToolSchema(properties = buildJsonObject {})
 
+    private val blueprintCompileSchema = ToolSchema(
+        properties = buildJsonObject {
+            putBlueprintIdProperty()
+            putJsonObject("activate") {
+                put("type", "boolean")
+                put("default", true)
+                put("description", "Load and activate/replace the compiled schematic placement in Litematica.")
+            }
+            putInt3Array("origin_override", "Optional world [x, y, z] anchor overriding session origin for this compilation.")
+        },
+        required = listOf("blueprint_id"),
+    )
+
+    private val blueprintClearPlacementSchema = ToolSchema(
+        properties = buildJsonObject {
+            putBlueprintIdProperty()
+            putJsonObject("delete_file") {
+                put("type", "boolean")
+                put("default", false)
+                put("description", "Also delete the compiled .litematic file from disk.")
+            }
+        },
+        required = listOf("blueprint_id"),
+    )
+
     private val readOnlyAnnotations = ToolAnnotations(
         readOnlyHint = true,
         destructiveHint = false,
@@ -282,6 +307,30 @@ object ArchicaMcpServerFactory {
         ) {
             McpToolExecutor.execute {
                 BlueprintToolCodec.formatList(blueprintService.list())
+            }
+        }
+
+        server.addTool(
+            name = "blueprint_compile",
+            description = "Rasterizes a blueprint to a .litematic schematic file and optionally activates/replaces its Litematica placement.",
+            inputSchema = blueprintCompileSchema,
+            toolAnnotations = draftMutationAnnotations,
+        ) { request ->
+            McpToolExecutor.execute {
+                val parsed = BlueprintToolCodec.parseCompile(request.arguments)
+                BlueprintToolCodec.formatCompile(blueprintService.compile(parsed))
+            }
+        }
+
+        server.addTool(
+            name = "blueprint_clear_placement",
+            description = "Removes the active Litematica placement for a blueprint and optionally deletes its .litematic file.",
+            inputSchema = blueprintClearPlacementSchema,
+            toolAnnotations = draftMutationAnnotations,
+        ) { request ->
+            McpToolExecutor.execute {
+                val parsed = BlueprintToolCodec.parseClearPlacement(request.arguments)
+                BlueprintToolCodec.formatClearPlacement(blueprintService.clearPlacement(parsed))
             }
         }
 

@@ -5,7 +5,11 @@ import com.archica.mcp.blueprint.FakeBlockCatalog
 import com.archica.mcp.blueprint.SurvivalSnapshotProvider
 import com.archica.mcp.context.FakeWorldContextSource
 import com.archica.mcp.context.InventoryEntry
+import com.archica.mcp.litematica.FakeLitematicaBridge
 import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Files
+import java.nio.file.Path
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -27,6 +31,9 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class ArchicaMcpServerIntegrationTest {
+    @TempDir
+    lateinit var tempDir: Path
+
     private val json = Json { ignoreUnknownKeys = true }
     private val httpClient: HttpClient = HttpClient.newHttpClient()
 
@@ -89,6 +96,8 @@ class ArchicaMcpServerIntegrationTest {
                     "blueprint_undo",
                     "blueprint_inspect",
                     "blueprint_list",
+                    "blueprint_compile",
+                    "blueprint_clear_placement",
                 ),
                 toolNames,
             )
@@ -278,6 +287,132 @@ class ArchicaMcpServerIntegrationTest {
                 McpErrorCode.BLUEPRINT_NOT_FOUND.name,
                 json.decodeFromString<McpErrorEnvelope>(firstTextContent(missingBpRes)).error.code,
             )
+        } finally {
+            server.stop()
+        }
+    }
+
+    @Test
+    fun `streamable http server executes blueprint_compile, blueprint_clear_placement, and LITEMATICA_UNAVAILABLE`() = runBlocking {
+        val world = FakeWorldContextSource(
+            inventory = listOf(InventoryEntry("minecraft:oak_planks", 4)),
+        )
+        val schematicsDir = tempDir.resolve("schematics")
+        val bridge = FakeLitematicaBridge(schematicsDir)
+        val server = ArchicaEmbeddedMcpServer(
+            spatialContext = LocalSpatialContextService(world),
+            blueprintService = BlueprintService(
+                catalog = FakeBlockCatalog(),
+                survivalProvider = SurvivalSnapshotProvider.fromWorldSource(world),
+                litematicaBridge = bridge,
+            ),
+            port = 0,
+        )
+        assertTrue(server.start())
+        try {
+            val port = requireNotNull(server.resolvedPort())
+            val endpoint = URI.create("http://127.0.0.1:$port/mcp")
+            val sessionId = initializeMcpSession(endpoint)
+
+            // Create empty blueprint and verify INVALID_ARGUMENTS on compile
+            callTool(
+                endpoint,
+                sessionId,
+                id = 30,
+                name = "blueprint_create",
+                argsJson = """{"blueprint_id":"hut","origin":[100,64,100],"facing":"EAST"}""",
+            )
+            val emptyCompile = callTool(
+                endpoint,
+                sessionId,
+                id = 31,
+                name = "blueprint_compile",
+                argsJson = """{"blueprint_id":"hut"}""",
+            )
+            assertTrue(emptyCompile["isError"]!!.jsonPrimitive.boolean)
+            assertEquals(
+                McpErrorCode.INVALID_ARGUMENTS.name,
+                json.decodeFromString<McpErrorEnvelope>(firstTextContent(emptyCompile)).error.code,
+            )
+
+            // Add ops, compile & activate
+            callTool(
+                endpoint,
+                sessionId,
+                id = 32,
+                name = "blueprint_add_ops",
+                argsJson = """{"blueprint_id":"hut","ops":[{"type":"fill_box","from":[0,0,0],"to":[2,1,2],"block":"minecraft:oak_planks"}]}""",
+            )
+            val firstCompile = callTool(
+                endpoint,
+                sessionId,
+                id = 33,
+                name = "blueprint_compile",
+                argsJson = """{"blueprint_id":"hut","activate":true}""",
+            )
+            assertFalse(firstCompile["isError"]?.jsonPrimitive?.boolean ?: false)
+            val firstJson = json.parseToJsonElement(firstTextContent(firstCompile)).jsonObject
+            assertEquals("schematics/archica/hut.litematic", firstJson["schematic_path"]!!.jsonPrimitive.content)
+            assertTrue(firstJson["activated"]!!.jsonPrimitive.boolean)
+            assertFalse(firstJson["replaced_existing_placement"]!!.jsonPrimitive.boolean)
+            assertEquals(18, firstJson["total_blocks"]!!.jsonPrimitive.int)
+            assertTrue(Files.exists(schematicsDir.resolve("archica/hut.litematic")))
+
+            // List confirms has_active_placement = true
+            val listRes = callTool(endpoint, sessionId, id = 34, name = "blueprint_list", argsJson = "{}")
+            val listJson = json.parseToJsonElement(firstTextContent(listRes)).jsonObject
+            assertTrue(listJson["blueprints"]!!.jsonArray.first().jsonObject["has_active_placement"]!!.jsonPrimitive.boolean)
+
+            // Re-compile replaces prior placement
+            val recompile = callTool(
+                endpoint,
+                sessionId,
+                id = 35,
+                name = "blueprint_compile",
+                argsJson = """{"blueprint_id":"hut","activate":true}""",
+            )
+            val recompileJson = json.parseToJsonElement(firstTextContent(recompile)).jsonObject
+            assertTrue(recompileJson["replaced_existing_placement"]!!.jsonPrimitive.boolean)
+
+            // Clear keeping file
+            val clearKeep = callTool(
+                endpoint,
+                sessionId,
+                id = 36,
+                name = "blueprint_clear_placement",
+                argsJson = """{"blueprint_id":"hut","delete_file":false}""",
+            )
+            val clearKeepJson = json.parseToJsonElement(firstTextContent(clearKeep)).jsonObject
+            assertTrue(clearKeepJson["cleared"]!!.jsonPrimitive.boolean)
+            assertFalse(clearKeepJson["deleted_file"]!!.jsonPrimitive.boolean)
+            assertTrue(Files.exists(schematicsDir.resolve("archica/hut.litematic")))
+
+            // Clear deleting file
+            val clearDelete = callTool(
+                endpoint,
+                sessionId,
+                id = 37,
+                name = "blueprint_clear_placement",
+                argsJson = """{"blueprint_id":"hut","delete_file":true}""",
+            )
+            val clearDeleteJson = json.parseToJsonElement(firstTextContent(clearDelete)).jsonObject
+            assertFalse(clearDeleteJson["cleared"]!!.jsonPrimitive.boolean)
+            assertTrue(clearDeleteJson["deleted_file"]!!.jsonPrimitive.boolean)
+            assertFalse(Files.exists(schematicsDir.resolve("archica/hut.litematic")))
+
+            // Adapter failure maps to LITEMATICA_UNAVAILABLE and reports saved schematic_path
+            bridge.adapterFailureMessage = "Litematica manager unavailable"
+            val failedCompile = callTool(
+                endpoint,
+                sessionId,
+                id = 38,
+                name = "blueprint_compile",
+                argsJson = """{"blueprint_id":"hut","activate":true}""",
+            )
+            assertTrue(failedCompile["isError"]!!.jsonPrimitive.boolean)
+            val err = json.decodeFromString<McpErrorEnvelope>(firstTextContent(failedCompile)).error
+            assertEquals(McpErrorCode.LITEMATICA_UNAVAILABLE.name, err.code)
+            assertTrue(err.message.contains("schematics/archica/hut.litematic"))
         } finally {
             server.stop()
         }

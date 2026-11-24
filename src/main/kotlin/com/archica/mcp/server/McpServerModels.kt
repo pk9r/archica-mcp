@@ -12,6 +12,7 @@ import com.archica.mcp.context.ScanVolumeRequest
 import com.archica.mcp.context.ScanVolumeResult
 import com.archica.mcp.context.VolumeScanner
 import com.archica.mcp.context.WorldContextSource
+import com.archica.mcp.litematica.LitematicaUnavailableException
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import kotlinx.coroutines.CancellationException
@@ -81,6 +82,7 @@ enum class McpErrorCode {
     BLUEPRINT_NOT_FOUND,
     OP_NOT_FOUND,
     INVALID_BLOCK_ID,
+    LITEMATICA_UNAVAILABLE,
     INTERNAL_ERROR,
     ;
 
@@ -148,6 +150,8 @@ object McpToolExecutor {
         errorResult(McpErrorCode.INVALID_ARGUMENTS, e.message)
     } catch (e: BlueprintException) {
         errorResult(McpErrorCode.fromBlueprintError(e.code), e.message)
+    } catch (e: LitematicaUnavailableException) {
+        errorResult(McpErrorCode.LITEMATICA_UNAVAILABLE, e.message)
     } catch (e: ContextCompressionException) {
         errorResult(McpErrorCode.fromContextError(e.code), e.message)
     } catch (e: TimeoutCancellationException) {

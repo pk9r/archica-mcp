@@ -13,6 +13,7 @@ import com.archica.mcp.context.ContextCompressionException
 import com.archica.mcp.context.ContextErrorCode
 import com.archica.mcp.context.ScanVolumeRequest
 import com.archica.mcp.context.ScanVolumeResult
+import com.archica.mcp.litematica.LitematicaUnavailableException
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import kotlinx.coroutines.CancellationException
@@ -179,6 +180,11 @@ class McpServerCoreTest {
             val res = McpToolExecutor.execute { throw BlueprintException(bpCode, bpCode.name) }
             assertErrorEnvelope(res, mcpCode, bpCode.name)
         }
+
+        val litematicaUnavailable = McpToolExecutor.execute {
+            throw LitematicaUnavailableException("litematica missing")
+        }
+        assertErrorEnvelope(litematicaUnavailable, McpErrorCode.LITEMATICA_UNAVAILABLE, "litematica missing")
     }
 
     @Test
@@ -250,6 +256,33 @@ class McpServerCoreTest {
         assertFailsWith<InvalidToolArgumentsException> {
             BlueprintToolCodec.parsePrimitiveOp(buildJsonObject { put("type", "pyramid") })
         }
+    }
+
+    @Test
+    fun `blueprint tool codec parses compile and clear placement options`() {
+        val compileDefault = BlueprintToolCodec.parseCompile(buildJsonObject { put("blueprint_id", "hut") })
+        assertEquals("hut", compileDefault.blueprintId)
+        assertTrue(compileDefault.activate)
+        assertEquals(null, compileDefault.originOverride)
+
+        val compileOverride = BlueprintToolCodec.parseCompile(
+            buildJsonObject {
+                put("blueprint_id", "hut")
+                put("activate", false)
+                put("origin_override", buildJsonArray { add(JsonPrimitive(1)); add(JsonPrimitive(70)); add(JsonPrimitive(-3)) })
+            },
+        )
+        assertFalse(compileOverride.activate)
+        assertEquals(BlockPos3i(1, 70, -3), compileOverride.originOverride)
+
+        val clearReq = BlueprintToolCodec.parseClearPlacement(
+            buildJsonObject {
+                put("blueprint_id", "hut")
+                put("delete_file", true)
+            },
+        )
+        assertEquals("hut", clearReq.blueprintId)
+        assertTrue(clearReq.deleteFile)
     }
 
     @Test

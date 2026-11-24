@@ -1,6 +1,6 @@
 # Architecture & Litematica Integration
 
-> **Status:** Planned v1 Architecture — describes the target runtime design for Minecraft `26.3` (Fabric + Fabric Language Kotlin).
+> **Status:** v1 Architecture Implemented — describes the runtime design for Minecraft `26.3` (Fabric + Fabric Language Kotlin + Litematica `0.29.1` / MaLiLib `0.30.2`).
 
 Archica MCP runs entirely inside the Minecraft client JVM. It bridges an external local AI agent (via MCP over Streamable HTTP) with the Minecraft client world and Litematica's hologram placement engine without modifying world blocks directly.
 
@@ -107,26 +107,28 @@ Ktor handles incoming HTTP/MCP requests on background IO/coroutine worker thread
 Archica MCP uses a **file-backed compilation + automatic Litematica placement** strategy rather than volatile RAM-only schematics.
 
 ### Step 1: Compile Voxel Buffer to `.litematic` NBT
-1. Flatten all active operations in the blueprint session into a bounded 3D voxel grid (see [Stateful Blueprints & Building Primitives](blueprint-primitives.md)).
-2. Compute minimum bounding box `(sizeX, sizeY, sizeZ)` and collect the blockstate palette (`air` at index `0`).
-3. Pack blockstate indices into Litematica's bit-packed `LongArray` (`BlockStates`) format along with `Metadata` (`Name`, `Author = "Archica MCP"`, `TimeCreated`, `TimeModified`, `TotalBlocks`, `TotalVolume`, `EnclosingSize`) and target `MinecraftDataVersion`.
-4. Write atomically (temp file -> move) to `.minecraft/schematics/archica/<blueprint_id>.litematic`.
+1. Flatten all active operations in the blueprint session into a bounded 3D voxel grid (see [Stateful Blueprints & Building Primitives](blueprint-primitives.md)), rejecting empty blueprints (`total_blocks == 0`) with `INVALID_ARGUMENTS`.
+2. Rotate voxels and directional blockstate properties (`facing`, `axis`) by `blueprint.facing`, compute minimum world bounding box (`worldBounds.min`, shifted by `origin_override` relative to session `origin` if supplied), normalize region coordinates to `[0..size-1]` (`Position = [0, 0, 0]`), and collect the blockstate palette (`minecraft:air` at index `0`).
+3. Pack blockstate indices in `y * (sizeX * sizeZ) + z * sizeX + x` order into Litematica v7 (`SubVersion = 1`) bit-packed `LongArray` (`BlockStates`, `bits >= 2` straddling 64-bit longs) along with `Metadata` (`Name`, `Author = "Archica MCP"`, `TimeCreated`, `TimeModified`, `TotalBlocks`, `TotalVolume`, `EnclosingSize`) and `MinecraftDataVersion` from `SharedConstants`.
+4. Write atomically (temp file -> move) to `<schematicsBaseDir>/archica/<blueprint_id>.litematic` (resolved from `DataManager.getSchematicsBaseDirectory()`).
 
 ### Step 2: Activate & Replace Placement in Litematica
-All Litematica interactions sit behind a dedicated `LitematicaBridge` interface so internal Litematica API changes across Minecraft 26.x patches remain isolated from the compiler and MCP layers.
+All Litematica interactions sit behind a dedicated `LitematicaBridge` interface (`ClientLitematicaBridge` on the client) so internal Litematica API changes across Minecraft 26.x patches remain isolated from the compiler and MCP layers.
 
 ```text
   blueprint_compile(id, activate = true)
        |
-       +--> Write .minecraft/schematics/archica/<id>.litematic
+       +--> Write <schematicsBaseDir>/archica/<id>.litematic (off-thread)
        |
-       +--> [Client Main Thread via LitematicaBridge]
-              1. Look up existing placement tagged with "archica:<id>"
+       +--> [Client Main Thread via ClientLitematicaBridge]
+              1. Look up existing placement named "archica:<id>"
               2. If present: remove old placement via SchematicPlacementManager
                  (prevents overlapping duplicate holograms on refinement)
-              3. Load schematic via LitematicaSchematic.createFromFile(...)
-              4. Create SchematicPlacement at blueprint world origin (enabled=true, render=true)
-              5. Register via DataManager.getSchematicPlacementManager().addSchematicPlacement(...)
+              3. Evict stale SchematicHolder entry matching target path
+              4. Load fresh schematic via LitematicaSchematic.createFromFile(...)
+              5. Create SchematicPlacement at world_origin (worldBounds.min)
+                 via SchematicPlacement.createFor(..., enabled=true, render=true)
+              6. Register via DataManager.getSchematicPlacementManager().addSchematicPlacement(..., false)
 ```
 
 ### Why File-Backed + Auto-Placement?

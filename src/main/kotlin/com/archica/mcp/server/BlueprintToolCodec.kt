@@ -1,6 +1,10 @@
 package com.archica.mcp.server
 
 import com.archica.mcp.blueprint.BlueprintBounds
+import com.archica.mcp.blueprint.BlueprintClearPlacementRequest
+import com.archica.mcp.blueprint.BlueprintClearPlacementResult
+import com.archica.mcp.blueprint.BlueprintCompileRequest
+import com.archica.mcp.blueprint.BlueprintCompileResult
 import com.archica.mcp.blueprint.BlueprintCreateRequest
 import com.archica.mcp.blueprint.BlueprintCreateResult
 import com.archica.mcp.blueprint.BlueprintInspectResult
@@ -21,6 +25,7 @@ import com.archica.mcp.server.JsonArgumentSupport.requireInt
 import com.archica.mcp.server.JsonArgumentSupport.requireObject
 import com.archica.mcp.server.JsonArgumentSupport.requireString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.add
@@ -108,6 +113,31 @@ object BlueprintToolCodec {
         return BlueprintInspectRequest(
             blueprintId = args.requireString("blueprint_id"),
             includeOps = args.optionalBoolean("include_ops", default = true),
+        )
+    }
+
+    fun parseCompile(arguments: JsonObject?): BlueprintCompileRequest {
+        val args = arguments ?: throw InvalidToolArgumentsException("Missing required argument: 'blueprint_id'.")
+        val blueprintId = args.requireString("blueprint_id")
+        val activate = args.optionalBoolean("activate", default = true)
+        val originEl = args["origin_override"]
+        val originOverride = if (originEl == null || originEl is JsonNull) {
+            null
+        } else {
+            originEl.requireBlockPos3i("origin_override")
+        }
+        return BlueprintCompileRequest(
+            blueprintId = blueprintId,
+            activate = activate,
+            originOverride = originOverride,
+        )
+    }
+
+    fun parseClearPlacement(arguments: JsonObject?): BlueprintClearPlacementRequest {
+        val args = arguments ?: throw InvalidToolArgumentsException("Missing required argument: 'blueprint_id'.")
+        return BlueprintClearPlacementRequest(
+            blueprintId = args.requireString("blueprint_id"),
+            deleteFile = args.optionalBoolean("delete_file", default = false),
         )
     }
 
@@ -254,6 +284,29 @@ object BlueprintToolCodec {
                     )
                 }
             }
+        },
+    )
+
+    fun formatCompile(result: BlueprintCompileResult): String = json.encodeToString(
+        JsonObject.serializer(),
+        buildJsonObject {
+            put("blueprint_id", result.blueprintId)
+            put("schematic_path", result.schematicPath)
+            put("activated", result.activated)
+            put("replaced_existing_placement", result.replacedExistingPlacement)
+            putPos("world_origin", result.worldOrigin)
+            putPos("enclosing_size", result.enclosingSize)
+            put("total_blocks", result.totalBlocks)
+            result.survivalCheck?.let { putSurvivalCheck(it) }
+        },
+    )
+
+    fun formatClearPlacement(result: BlueprintClearPlacementResult): String = json.encodeToString(
+        JsonObject.serializer(),
+        buildJsonObject {
+            put("blueprint_id", result.blueprintId)
+            put("cleared", result.cleared)
+            put("deleted_file", result.deletedFile)
         },
     )
 

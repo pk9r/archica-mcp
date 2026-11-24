@@ -57,7 +57,7 @@ The MCP server SHALL register `scan_volume` accepting required 3-integer arrays 
 - **THEN** the server uses `include_states = false` and returns `isError = false` with the RLE-encoded `[VOLUME]` text payload
 
 ### Requirement: Unified structured error envelope
-All MCP tool errors SHALL return `isError = true` with a single JSON text payload `{"error": {"code": "<CODE>", "message": "<MESSAGE>"}}`. Codes SHALL map to `NO_WORLD_LOADED`, `INVALID_RADIUS`, `INVALID_BOUNDS`, `VOLUME_TOO_LARGE`, `INVALID_ARGUMENTS`, `CLIENT_TIMEOUT`, `BLUEPRINT_EXISTS`, `BLUEPRINT_NOT_FOUND`, `OP_NOT_FOUND`, `INVALID_BLOCK_ID`, and `INTERNAL_ERROR`.
+All MCP tool errors SHALL return `isError = true` with a single JSON text payload `{"error": {"code": "<CODE>", "message": "<MESSAGE>"}}`. Codes SHALL map to `NO_WORLD_LOADED`, `INVALID_RADIUS`, `INVALID_BOUNDS`, `VOLUME_TOO_LARGE`, `INVALID_ARGUMENTS`, `CLIENT_TIMEOUT`, `BLUEPRINT_EXISTS`, `BLUEPRINT_NOT_FOUND`, `OP_NOT_FOUND`, `INVALID_BLOCK_ID`, `LITEMATICA_UNAVAILABLE`, and `INTERNAL_ERROR`.
 
 #### Scenario: Missing required scan_volume argument
 - **WHEN** an MCP client calls `scan_volume` without `max` or with `"min": [1, 2]`
@@ -79,6 +79,10 @@ All MCP tool errors SHALL return `isError = true` with a single JSON text payloa
 - **WHEN** an MCP client calls `blueprint_add_ops` with an unknown block identifier or invalid blockstate property
 - **THEN** the server returns `isError = true` whose text parses to JSON with `error.code = "INVALID_BLOCK_ID"` and a descriptive `error.message`
 
+#### Scenario: Litematica placement adapter error maps to LITEMATICA_UNAVAILABLE
+- **WHEN** `blueprint_compile` or `blueprint_clear_placement` fails inside the Litematica runtime adapter
+- **THEN** the server returns `isError = true` whose text parses to JSON with `error.code = "LITEMATICA_UNAVAILABLE"` and a descriptive `error.message`
+
 ### Requirement: Blueprint session creation and listing tools
 The MCP server SHALL register `blueprint_create` (required `blueprint_id` matching `^[a-z0-9_-]{1,48}$`, required 3-integer `origin`, optional cardinal `facing` defaulting to `NORTH`, optional boolean `overwrite` defaulting to `false`) and `blueprint_list` (empty arguments returning all active draft sessions in memory and whether each has an active placement).
 
@@ -99,3 +103,17 @@ The MCP server SHALL register `blueprint_inspect` (required `blueprint_id`, opti
 #### Scenario: Inspecting a blueprint with include_ops disabled
 - **WHEN** an MCP client calls `blueprint_inspect` with `{"blueprint_id": "oak_cottage", "include_ops": false}`
 - **THEN** the server returns `isError = false` with bounding box and material counts while omitting the detailed `ops` array
+
+### Requirement: Blueprint compilation MCP tool
+The MCP server SHALL register `blueprint_compile` accepting required `blueprint_id`, optional boolean `activate` (default `true`), and optional 3-integer `origin_override`, compiling the blueprint to `.litematic`, optionally activating/replacing its Litematica placement, and returning `blueprint_id`, `schematic_path`, `activated`, `replaced_existing_placement`, `world_origin`, `enclosing_size`, `total_blocks`, and optional `survival_check`.
+
+#### Scenario: Compiling and activating a blueprint over MCP
+- **WHEN** an MCP client calls `blueprint_compile` with `{"blueprint_id": "oak_cottage", "activate": true}` while a world is loaded
+- **THEN** the server returns `isError = false` with `schematic_path`, `activated = true`, `world_origin`, `enclosing_size`, and `total_blocks`
+
+### Requirement: Blueprint placement clearance MCP tool
+The MCP server SHALL register `blueprint_clear_placement` accepting required `blueprint_id` and optional boolean `delete_file` (default `false`), removing any active Litematica placement for `blueprint_id`, optionally deleting its `.litematic` file, and returning `blueprint_id`, `cleared`, and `deleted_file`.
+
+#### Scenario: Clearing an active placement and deleting its file over MCP
+- **WHEN** an MCP client calls `blueprint_clear_placement` with `{"blueprint_id": "oak_cottage", "delete_file": true}` while a world is loaded
+- **THEN** the server returns `isError = false` with `cleared = true` and `deleted_file = true`

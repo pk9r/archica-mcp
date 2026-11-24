@@ -8,6 +8,8 @@ import com.archica.mcp.context.BuildContextResult
 import com.archica.mcp.context.ClientThreadDispatcher
 import com.archica.mcp.context.ScanVolumeRequest
 import com.archica.mcp.context.ScanVolumeResult
+import com.archica.mcp.litematica.ClientLitematicaBridge
+import com.archica.mcp.litematica.LitematicSchematicCompiler
 import com.archica.mcp.server.ArchicaEmbeddedMcpServer
 import com.archica.mcp.server.McpPortConfig
 import com.archica.mcp.server.SpatialContextService
@@ -19,6 +21,7 @@ import kotlinx.coroutines.launch
 import net.fabricmc.api.ClientModInitializer
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents
 import net.fabricmc.loader.api.FabricLoader
+import net.minecraft.SharedConstants
 import org.slf4j.LoggerFactory
 
 /** Fabric client entrypoint for Archica MCP. */
@@ -51,9 +54,15 @@ object ArchicaMcpClient : ClientModInitializer {
                 dispatcher.scanVolume(request)
         }
 
+        val litematicaBridge = ClientLitematicaBridge(dispatcher)
+        val schematicCompiler = LitematicSchematicCompiler(
+            minecraftDataVersionProvider = { SharedConstants.getCurrentVersion().dataVersion().version() },
+        )
         val blueprintService = BlueprintService(
             catalog = ClientBlockCatalog(),
             survivalProvider = SurvivalSnapshotProvider { dispatcher.readSurvivalSnapshotOrNull() },
+            litematicaBridge = litematicaBridge,
+            compiler = schematicCompiler,
         )
 
         val server = ArchicaEmbeddedMcpServer(

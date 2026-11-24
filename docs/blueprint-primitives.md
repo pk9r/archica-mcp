@@ -1,6 +1,6 @@
 # Stateful Blueprints & Building Primitives
 
-> **Status:** v1 Draft Engine & Primitives Implemented (`blueprint_create`..`blueprint_list`, forward-aligned facing transforms, `BlockCatalog` auto-orientation, and 11 v1 primitives); `.litematic` NBT export & Litematica placement (`blueprint_compile`, `blueprint_clear_placement`) are planned for `litematica-compiler`.
+> **Status:** v1 Draft Engine, Primitives & Litematica Compilation Implemented (`blueprint_create`..`blueprint_list`, `blueprint_compile`, `blueprint_clear_placement`, forward-aligned facing transforms, `BlockCatalog` auto-orientation, 11 v1 primitives, and `.litematic` v7 export + `ClientLitematicaBridge`).
 
 Rather than forcing an AI agent to emit thousands of individual `set_block` calls or regenerate an entire build from scratch on every feedback turn, Archica MCP uses **stateful in-memory blueprint sessions** driven by composable **building primitives**.
 

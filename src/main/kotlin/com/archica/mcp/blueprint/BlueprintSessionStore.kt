@@ -2,8 +2,17 @@ package com.archica.mcp.blueprint
 
 import com.archica.mcp.context.BlockPos3i
 import com.archica.mcp.context.CardinalDirection
+import com.archica.mcp.context.ContextCompressionException
 import com.archica.mcp.context.InventoryEntry
 import com.archica.mcp.context.WorldContextSource
+import com.archica.mcp.litematica.LitematicSchematicCompiler
+import com.archica.mcp.litematica.LitematicaBridge
+import com.archica.mcp.litematica.LitematicaUnavailableException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withContext
+import java.nio.file.Files
 import java.util.concurrent.ConcurrentHashMap
 
 /** Snapshot of player game mode and inventory used for non-blocking survival material warnings. */
@@ -86,6 +95,34 @@ data class BlueprintListItem(
 
 data class BlueprintListResult(
     val blueprints: List<BlueprintListItem>,
+)
+
+data class BlueprintCompileRequest(
+    val blueprintId: String,
+    val activate: Boolean = true,
+    val originOverride: BlockPos3i? = null,
+)
+
+data class BlueprintCompileResult(
+    val blueprintId: String,
+    val schematicPath: String,
+    val activated: Boolean,
+    val replacedExistingPlacement: Boolean,
+    val worldOrigin: BlockPos3i,
+    val enclosingSize: BlockPos3i,
+    val totalBlocks: Int,
+    val survivalCheck: SurvivalMaterialCheck? = null,
+)
+
+data class BlueprintClearPlacementRequest(
+    val blueprintId: String,
+    val deleteFile: Boolean = false,
+)
+
+data class BlueprintClearPlacementResult(
+    val blueprintId: String,
+    val cleared: Boolean,
+    val deletedFile: Boolean,
 )
 
 /**
@@ -293,21 +330,33 @@ class BlueprintSessionStore(
 
     companion object {
         private val BLUEPRINT_ID_REGEX = Regex("^[a-z0-9_-]{1,48}$")
+
+        fun requireValidBlueprintId(blueprintId: String) {
+            if (!BLUEPRINT_ID_REGEX.matches(blueprintId)) {
+                throw BlueprintException(
+                    BlueprintErrorCode.INVALID_ARGUMENTS,
+                    "Invalid blueprint_id '$blueprintId': must match ^[a-z0-9_-]{1,48}$.",
+                )
+            }
+        }
     }
 }
 
 /**
- * Coordinates [BlueprintSessionStore] mutations/inspections with optional non-blocking survival material checks.
+ * Coordinates [BlueprintSessionStore] mutations/inspections with optional survival material checks
+ * and `.litematic` compilation / placement via [LitematicaBridge].
  */
 class BlueprintService(
     catalog: BlockCatalog,
     private val survivalProvider: SurvivalSnapshotProvider = SurvivalSnapshotProvider { null },
-    activePlacementChecker: (String) -> Boolean = { false },
+    activePlacementChecker: ((String) -> Boolean)? = null,
+    private val litematicaBridge: LitematicaBridge? = null,
+    private val compiler: LitematicSchematicCompiler = LitematicSchematicCompiler(),
     maxVolume: Long = VoxelGrid.MAX_RASTERIZED_VOLUME,
 ) {
     private val store = BlueprintSessionStore(
         catalog = catalog,
-        activePlacementChecker = activePlacementChecker,
+        activePlacementChecker = activePlacementChecker ?: { id -> litematicaBridge?.hasActivePlacement(id) ?: false },
         maxVolume = maxVolume,
     )
 
@@ -345,6 +394,123 @@ class BlueprintService(
     }
 
     fun list(): BlueprintListResult = store.list()
+
+    suspend fun compile(request: BlueprintCompileRequest): BlueprintCompileResult {
+        BlueprintSessionStore.requireValidBlueprintId(request.blueprintId)
+        val eval = store.inspect(request.blueprintId)
+        if (eval.grid.totalBlocks == 0) {
+            throw BlueprintException(
+                BlueprintErrorCode.INVALID_ARGUMENTS,
+                "Cannot compile empty blueprint '${request.blueprintId}' with 0 non-air blocks.",
+            )
+        }
+
+        val bridge = litematicaBridge
+            ?: throw LitematicaUnavailableException("Litematica bridge is not configured.")
+        val schematicsDir = resolveSchematicsDir(bridge)
+        val compiled = withContext(Dispatchers.IO) {
+            compiler.compileToFile(
+                blueprintId = eval.blueprintId,
+                sessionOrigin = eval.origin,
+                facing = eval.facing,
+                grid = eval.grid,
+                schematicsBaseDir = schematicsDir,
+                originOverride = request.originOverride,
+            )
+        }
+
+        var activated = false
+        var replacedExisting = false
+        if (request.activate) {
+            try {
+                replacedExisting = bridge.activatePlacement(
+                    blueprintId = eval.blueprintId,
+                    schematicFile = compiled.filePath,
+                    worldOrigin = compiled.worldOrigin,
+                )
+                activated = true
+            } catch (e: LitematicaUnavailableException) {
+                val msg = if (e.message.contains(compiled.schematicPath)) {
+                    e.message
+                } else {
+                    "${e.message} (compiled schematic saved at '${compiled.schematicPath}')"
+                }
+                throw LitematicaUnavailableException(msg, schematicPath = compiled.schematicPath, cause = e)
+            } catch (e: ContextCompressionException) {
+                throw e
+            } catch (e: TimeoutCancellationException) {
+                throw e
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                throw LitematicaUnavailableException(
+                    "Failed to activate Litematica placement for '${eval.blueprintId}': " +
+                        "${t.message ?: t::class.simpleName} (compiled schematic saved at '${compiled.schematicPath}')",
+                    schematicPath = compiled.schematicPath,
+                    cause = t,
+                )
+            }
+        }
+
+        val materials = eval.grid.materialCounts()
+        return BlueprintCompileResult(
+            blueprintId = eval.blueprintId,
+            schematicPath = compiled.schematicPath,
+            activated = activated,
+            replacedExistingPlacement = replacedExisting,
+            worldOrigin = compiled.worldOrigin,
+            enclosingSize = compiled.enclosingSize,
+            totalBlocks = compiled.totalBlocks,
+            survivalCheck = computeSurvivalCheck(materials),
+        )
+    }
+
+    suspend fun clearPlacement(request: BlueprintClearPlacementRequest): BlueprintClearPlacementResult {
+        BlueprintSessionStore.requireValidBlueprintId(request.blueprintId)
+        val bridge = litematicaBridge
+            ?: throw LitematicaUnavailableException("Litematica bridge is not configured.")
+        val cleared = try {
+            bridge.clearPlacement(request.blueprintId)
+        } catch (e: LitematicaUnavailableException) {
+            throw e
+        } catch (e: ContextCompressionException) {
+            throw e
+        } catch (e: TimeoutCancellationException) {
+            throw e
+        } catch (e: CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            throw LitematicaUnavailableException(
+                "Failed to clear Litematica placement for '${request.blueprintId}': ${t.message ?: t::class.simpleName}",
+                cause = t,
+            )
+        }
+
+        var deletedFile = false
+        if (request.deleteFile) {
+            val schematicsDir = resolveSchematicsDir(bridge)
+            val filePath = schematicsDir
+                .resolve(LitematicSchematicCompiler.ARCHICA_SUBDIR)
+                .resolve("${request.blueprintId}${LitematicSchematicCompiler.LITEMATIC_EXTENSION}")
+            deletedFile = withContext(Dispatchers.IO) { Files.deleteIfExists(filePath) }
+        }
+        return BlueprintClearPlacementResult(
+            blueprintId = request.blueprintId,
+            cleared = cleared,
+            deletedFile = deletedFile,
+        )
+    }
+
+    private fun resolveSchematicsDir(bridge: LitematicaBridge) = try {
+        bridge.schematicsDirectory()
+    } catch (e: LitematicaUnavailableException) {
+        throw e
+    } catch (t: Throwable) {
+        throw LitematicaUnavailableException(
+            "Unable to resolve Litematica schematics directory: ${t.message ?: t::class.simpleName}",
+            cause = t,
+        )
+    }
 
     private suspend fun toMutationResult(eval: BlueprintSessionStore.SessionEvaluation): BlueprintMutationResult {
         val materials = eval.grid.materialCounts()
