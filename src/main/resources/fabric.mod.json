@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "archica-mcp",
+  "version": "${version}",
+  "name": "Archica MCP",
+  "description": "Client-side AI architectural assistant for Minecraft via embedded MCP and Litematica.",
+  "authors": [
+    "Archica MCP Contributors"
+  ],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      {
+        "adapter": "kotlin",
+        "value": "com.archica.mcp.ArchicaMcpClient"
+      }
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.20.1",
+    "minecraft": "~26.3",
+    "java": ">=25",
+    "fabric-api": "*",
+    "fabric-language-kotlin": ">=1.14.2+kotlin.2.4.21"
+  },
+  "recommends": {
+    "litematica": "*"
+  }
+}
