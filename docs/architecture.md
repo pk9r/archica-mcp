@@ -61,10 +61,10 @@ Archica MCP runs entirely inside the Minecraft client JVM. It bridges an externa
 ## 2. Embedded MCP Server & Security
 
 ### Transport
-- **Library**: Official `io.modelcontextprotocol:kotlin-sdk` (`0.16.0`) using Ktor CIO (`io.ktor:ktor-server-cio-jvm`).
-- **Endpoint**: `http://127.0.0.1:25580/mcp` via `mcpStreamableHttp(path = "/mcp")`.
-- **Lifecycle**: Starts asynchronously during `ClientModInitializer.onInitializeClient()` (or via client command toggle `/archica mcp start|stop`) and shuts down gracefully on `ClientLifecycleEvents.CLIENT_STOPPING`.
-- **Port Configuration**: Default `25580`, configurable via mod configuration / MaLiLib settings.
+- **Library**: Official `io.modelcontextprotocol:kotlin-sdk` (`0.16.0`) using Ktor CIO (`io.ktor:ktor-server-cio-jvm` `3.5.2`).
+- **Endpoint**: `http://127.0.0.1:<port>/mcp` (default `25580`) via `mcpStreamableHttp(path = "/mcp")`.
+- **Lifecycle**: Starts asynchronously on `Dispatchers.IO` during `ClientModInitializer.onInitializeClient()` and shuts down gracefully on `ClientLifecycleEvents.CLIENT_STOPPING`. If binding fails (e.g., port already in use by another Minecraft instance), startup fails silently with a `WARN` log so the game continues running normally.
+- **Port Configuration**: Default `25580`, overridable via `-Darchica.mcp.port=<port>` (`1..65535`; invalid values log a warning and fall back to `25580`). Planned `/archica mcp start|stop` client commands and MaLiLib GUI settings are deferred to a later slice.
 
 ### Loopback & DNS-Rebinding Protection
 - The Ktor server binds exclusively to `127.0.0.1` (not `0.0.0.0`), preventing LAN or external network exposure.

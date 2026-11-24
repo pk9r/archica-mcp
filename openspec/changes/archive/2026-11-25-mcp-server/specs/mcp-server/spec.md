@@ -1,0 +1,72 @@
+# mcp-server Specification
+
+## Purpose
+
+Defines the `mcp-server` capability for hosting an embedded, loopback-only Streamable HTTP MCP server inside the Minecraft client and exposing the v1 spatial context tools (`get_build_context`, `scan_volume`) with unified structured error payloads.
+
+## ADDED Requirements
+
+### Requirement: Loopback-only Streamable HTTP MCP endpoint
+The system SHALL expose an embedded MCP server speaking Streamable HTTP at `http://127.0.0.1:<port>/mcp` (default port `25580`). It SHALL bind exclusively to the IPv4 loopback interface `127.0.0.1` and SHALL NOT listen on wildcard or LAN interfaces (`0.0.0.0`).
+
+#### Scenario: Local MCP client connects and lists tools
+- **WHEN** a local MCP client initializes a Streamable HTTP session against `http://127.0.0.1:25580/mcp` and sends `tools/list`
+- **THEN** the server completes the MCP handshake and advertises `get_build_context` and `scan_volume` with their JSON input schemas
+
+### Requirement: DNS-rebinding and origin protection
+The MCP endpoint SHALL enforce DNS-rebinding protection by validating `Host` and `Origin` headers on incoming requests and rejecting requests from non-loopback hosts or origins outside `127.0.0.1`, `localhost`, and `[::1]`.
+
+#### Scenario: Request with external Origin header is rejected
+- **WHEN** an HTTP client sends a request to `/mcp` with `Origin: https://evil.example`
+- **THEN** the server rejects the request before invoking any MCP tool
+
+### Requirement: Port configuration via JVM system property
+The system SHALL resolve the listening port from the `archica.mcp.port` JVM system property (`-Darchica.mcp.port=<port>`), defaulting to `25580` when unset. If the property is non-numeric or outside `1..65535`, the system SHALL log a warning and fall back to default port `25580`.
+
+#### Scenario: Valid custom port override
+- **WHEN** the client starts with `-Darchica.mcp.port=25581`
+- **THEN** the MCP server binds to `127.0.0.1:25581` and serves `/mcp` on that port
+
+#### Scenario: Invalid custom port falls back to default
+- **WHEN** the client starts with `-Darchica.mcp.port=not_a_number` or `-Darchica.mcp.port=70000`
+- **THEN** the system logs a warning and falls back to binding on port `25580`
+
+### Requirement: Fail-silent client lifecycle and graceful shutdown
+The embedded MCP server SHALL start asynchronously during client initialization and shut down gracefully when the client stops. If binding the port or starting the server fails (for example, because another process already occupies the port), the system SHALL log a warning and allow the Minecraft client to continue running normally without crashing.
+
+#### Scenario: Port conflict on startup fails silently
+- **WHEN** another process is already listening on `127.0.0.1:25580` during client initialization
+- **THEN** the system catches the startup failure, logs a warning including the endpoint/port, and leaves the Minecraft client running normally
+
+#### Scenario: Client shutdown stops the embedded server
+- **WHEN** the Minecraft client triggers its stopping lifecycle event while the MCP server is running
+- **THEN** the embedded MCP server stops gracefully and releases its bound socket
+
+### Requirement: Spatial context tool exposure for get_build_context
+The MCP server SHALL register `get_build_context` accepting an optional integer `radius` (default `12`) and returning the compact `[PLAYER]`, `[INVENTORY_MATERIALS]`, `[SURFACE_LEGEND]`, and `[TERRAIN_GRID]` text payload for the loaded player and world.
+
+#### Scenario: Calling get_build_context with custom radius
+- **WHEN** a connected MCP client calls `tools/call` for `get_build_context` with `{"radius": 8}` while a world is loaded
+- **THEN** the server returns `isError = false` with the compact `17x17` text payload generated for the loaded player and world
+
+### Requirement: Spatial context tool exposure for scan_volume
+The MCP server SHALL register `scan_volume` accepting required 3-integer arrays `min` and `max` plus optional boolean `include_states` (default `false`), and returning the compact `[VOLUME]`, `[PALETTE]`, and RLE Y-slice text payload.
+
+#### Scenario: Calling scan_volume with defaults
+- **WHEN** a connected MCP client calls `tools/call` for `scan_volume` with `{"min": [0, 64, 0], "max": [4, 66, 2]}` while a world is loaded
+- **THEN** the server uses `include_states = false` and returns `isError = false` with the RLE-encoded `[VOLUME]` text payload
+
+### Requirement: Unified structured error envelope
+All MCP tool errors SHALL return `isError = true` with a single JSON text payload `{"error": {"code": "<CODE>", "message": "<MESSAGE>"}}`. Codes SHALL map to `NO_WORLD_LOADED`, `INVALID_RADIUS`, `INVALID_BOUNDS`, `VOLUME_TOO_LARGE`, `INVALID_ARGUMENTS`, `CLIENT_TIMEOUT`, and `INTERNAL_ERROR`.
+
+#### Scenario: Missing required scan_volume argument
+- **WHEN** an MCP client calls `scan_volume` without `max` or with `"min": [1, 2]`
+- **THEN** the server returns `isError = true` whose text parses to JSON with `error.code = "INVALID_ARGUMENTS"` and a descriptive `error.message`
+
+#### Scenario: World scanner guard maps to structured JSON error
+- **WHEN** an MCP client calls `get_build_context` while the player is on the title screen
+- **THEN** the server returns `isError = true` whose text parses to JSON with `error.code = "NO_WORLD_LOADED"` and a descriptive `error.message`
+
+#### Scenario: Main-thread dispatch timeout maps to CLIENT_TIMEOUT
+- **WHEN** executing `get_build_context` or `scan_volume` on the client main thread exceeds the configured dispatch timeout
+- **THEN** the server returns `isError = true` whose text parses to JSON with `error.code = "CLIENT_TIMEOUT"` and a descriptive `error.message`
