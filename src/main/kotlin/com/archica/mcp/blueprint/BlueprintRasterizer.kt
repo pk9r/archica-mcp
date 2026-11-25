@@ -79,7 +79,29 @@ class BlueprintRasterizer(
             applyOp(grid, op, depth = 0)
             grid.checkEnclosingVolumeCap()
         }
+        autoConnectConnectables(grid)
         return grid
+    }
+
+    private fun autoConnectConnectables(grid: VoxelGrid) {
+        val updates = ArrayList<Pair<BlockPos3i, BlockSpec>>()
+        for ((pos, spec) in grid.entries()) {
+            val resolved = catalog.resolve(spec)
+            if (resolved.kind != BlockKind.CONNECTABLE) continue
+            val defaults = mapOf(
+                "north" to (grid.get(pos.plus(BlockPos3i(0, 0, 1))) != null).toString(),
+                "east" to (grid.get(pos.plus(BlockPos3i(1, 0, 0))) != null).toString(),
+                "south" to (grid.get(pos.plus(BlockPos3i(0, 0, -1))) != null).toString(),
+                "west" to (grid.get(pos.plus(BlockPos3i(-1, 0, 0))) != null).toString(),
+            )
+            val connected = spec.withDefaultProperties(defaults)
+            if (connected != spec) {
+                updates.add(pos to connected)
+            }
+        }
+        for ((pos, connected) in updates) {
+            grid.set(pos, connected)
+        }
     }
 
     private fun applyOp(grid: VoxelGrid, op: PrimitiveOp, depth: Int) {

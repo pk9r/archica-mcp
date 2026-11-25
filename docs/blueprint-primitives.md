@@ -54,7 +54,7 @@ Primitives accept standard Minecraft block identifiers (with optional explicit b
 - **`stairs`** (`gable_roof`, `staircase`): Automatically computes `facing` toward the ascent/slope direction and sets `half=bottom` (or `half=top` for inverted under-eave steps).
 - **`logs` / pillars** (`line`, `fill_box`): Infers `axis` (`x`, `y`, `z`) from the dominant direction of a `line` (vertical beams -> `axis=y`; horizontal beams along X -> `axis=x`).
 - **`doors`**: Places both lower (`half=lower`) and upper (`half=upper`) halves cleanly when placed at a doorway coordinate, facing outward if specified or inferred from adjacent wall openings.
-- **`glass_pane` / `iron_bars` / `fence`**: Leaves connection states (`north/south/east/west`) computed during rasterization or lets Litematica/Minecraft derive neighbor connections consistently.
+- **`glass_pane` / `iron_bars` / `fence`**: Automatically computes horizontal `north`/`south`/`east`/`west` connections against adjacent non-air blocks after all operations rasterize (preserving any explicit connection properties set by the caller) and rotates those connection flags alongside `blueprint.facing` on export.
 
 ---
 

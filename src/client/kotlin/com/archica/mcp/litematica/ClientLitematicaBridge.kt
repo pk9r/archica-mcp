@@ -2,6 +2,8 @@ package com.archica.mcp.litematica
 
 import com.archica.mcp.context.BlockPos3i
 import com.archica.mcp.context.ClientThreadDispatcher
+import com.archica.mcp.context.ContextCompressionException
+import com.archica.mcp.context.ContextErrorCode
 import fi.dy.masa.litematica.data.DataManager
 import fi.dy.masa.litematica.data.SchematicHolder
 import fi.dy.masa.litematica.schematic.LitematicaSchematic
@@ -44,12 +46,7 @@ class ClientLitematicaBridge(
             }
 
             // Evict any cached schematic pointing at the overwritten path so Litematica reloads from disk.
-            val normalizedFile = schematicFile.toAbsolutePath().normalize()
-            val staleSchematics = schematicHolder.allSchematics
-                .filter { it.file?.toAbsolutePath()?.normalize() == normalizedFile }
-            for (stale in staleSchematics) {
-                schematicHolder.removeSchematic(stale)
-            }
+            evictMatchingSchematics(schematicHolder, schematicFile)
 
             val dir = schematicFile.parent
             val fileName = schematicFile.fileName.toString()
@@ -100,18 +97,50 @@ class ClientLitematicaBridge(
         }
     }
 
-    override fun hasActivePlacement(blueprintId: String): Boolean {
-        val targetName = placementName(blueprintId)
-        return runCatching {
-            DataManager.getSchematicPlacementManager()
-                .getAllSchematicsPlacements()
-                .any { it.name == targetName }
-        }.getOrElse {
-            activePlacementIds.contains(blueprintId)
+    override suspend fun evictCachedSchematic(schematicFile: Path) {
+        if (!dispatcher.isWorldLoaded()) return
+        try {
+            dispatcher.runOnClientThread {
+                evictMatchingSchematics(SchematicHolder.getInstance(), schematicFile)
+            }
+        } catch (e: ContextCompressionException) {
+            if (e.code != ContextErrorCode.NO_WORLD_LOADED) throw e
+        }
+    }
+
+    override suspend fun listActivePlacements(): Set<String> {
+        if (!dispatcher.isWorldLoaded()) return emptySet()
+        return try {
+            dispatcher.runOnClientThread {
+                val active = DataManager.getSchematicPlacementManager()
+                    .getAllSchematicsPlacements()
+                    .mapNotNull { placement ->
+                        placement.name
+                            .takeIf { it.startsWith(PLACEMENT_PREFIX) }
+                            ?.removePrefix(PLACEMENT_PREFIX)
+                    }
+                    .toSet()
+                activePlacementIds.clear()
+                activePlacementIds.addAll(active)
+                active
+            }
+        } catch (e: ContextCompressionException) {
+            if (e.code == ContextErrorCode.NO_WORLD_LOADED) emptySet() else throw e
+        }
+    }
+
+    private fun evictMatchingSchematics(schematicHolder: SchematicHolder, schematicFile: Path) {
+        val normalizedFile = schematicFile.toAbsolutePath().normalize()
+        val staleSchematics = schematicHolder.allSchematics
+            .filter { it.file?.toAbsolutePath()?.normalize() == normalizedFile }
+        for (stale in staleSchematics) {
+            schematicHolder.removeSchematic(stale)
         }
     }
 
     companion object {
-        fun placementName(blueprintId: String): String = "archica:$blueprintId"
+        const val PLACEMENT_PREFIX = "archica:"
+
+        fun placementName(blueprintId: String): String = "$PLACEMENT_PREFIX$blueprintId"
     }
 }

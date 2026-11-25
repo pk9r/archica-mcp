@@ -216,4 +216,33 @@ class BlueprintRasterizerTest {
         assertEquals(BlueprintErrorCode.VOLUME_TOO_LARGE, err.code)
         assertTrue(err.message.contains("131072"))
     }
+
+    @Test
+    fun `connectable panes and fences auto-connect horizontally while preserving explicit properties`() {
+        val grid = rasterizer.rasterize(
+            listOf(
+                PrimitiveOp.SetBlock(BlockPos3i(0, 0, 0), "minecraft:oak_planks"),
+                PrimitiveOp.SetBlock(BlockPos3i(2, 0, 0), "minecraft:oak_planks"),
+                PrimitiveOp.SetBlock(BlockPos3i(1, 0, 0), "minecraft:glass_pane"),
+                PrimitiveOp.SetBlock(BlockPos3i(1, 0, 1), "minecraft:glass_pane"),
+                PrimitiveOp.SetBlock(BlockPos3i(5, 0, 5), "minecraft:oak_planks"),
+                PrimitiveOp.SetBlock(BlockPos3i(5, 0, 3), "minecraft:oak_planks"),
+                PrimitiveOp.SetBlock(BlockPos3i(6, 0, 4), "minecraft:oak_planks"),
+                PrimitiveOp.SetBlock(BlockPos3i(4, 0, 4), "minecraft:oak_planks"),
+                PrimitiveOp.SetBlock(BlockPos3i(5, 0, 4), "minecraft:oak_fence[north=true,east=false]"),
+            ),
+        )
+
+        val middlePane = grid.get(BlockPos3i(1, 0, 0))!!.properties
+        assertEquals("true", middlePane["east"])
+        assertEquals("true", middlePane["west"])
+        assertEquals("true", middlePane["north"])
+        assertEquals("false", middlePane["south"])
+
+        val explicitFence = grid.get(BlockPos3i(5, 0, 4))!!.properties
+        assertEquals("true", explicitFence["north"])
+        assertEquals("false", explicitFence["east"])
+        assertEquals("true", explicitFence["south"])
+        assertEquals("true", explicitFence["west"])
+    }
 }

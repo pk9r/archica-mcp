@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-> **Status:** All 11 v1 Spatial Context, Blueprint Draft Session, and Litematica Compilation & Placement tools are implemented over Streamable HTTP at `http://127.0.0.1:25580/mcp` (override port with `-Darchica.mcp.port=<port>`).
+> **Status:** All 11 v1 Spatial Context, Blueprint Draft Session, and Litematica Compilation & Placement tools are implemented over Streamable HTTP at `http://127.0.0.1:25580/mcp` (override startup port with `-Darchica.mcp.port=<port>`, or control at runtime via `/archica mcp start|stop`). Server initialization also advertises concise workflow `instructions` and detailed primitive parameter descriptions in tool schemas.
 
 Archica MCP exposes 11 tools grouped into **Spatial Context** (reading player surroundings) and **Stateful Blueprints & Litematica Activation** (drafting, refining, and compiling `.litematic` holograms).
 

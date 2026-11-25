@@ -67,6 +67,11 @@ class ArchicaMcpServerIntegrationTest {
                 """.trimIndent(),
             )
             assertEquals(200, initResponse.statusCode())
+            val initResult = extractJsonRpcResult(initResponse.body())
+            val instructions = initResult["instructions"]?.jsonPrimitive?.content
+            assertNotNull(instructions, "Expected server instructions in initialize result")
+            assertTrue(instructions.contains("get_build_context"))
+            assertTrue(instructions.contains("+Z forward"))
             val sessionId = initResponse.headers().firstValue("mcp-session-id").orElse(null)
             assertNotNull(sessionId, "Expected mcp-session-id response header")
 
@@ -101,6 +106,18 @@ class ArchicaMcpServerIntegrationTest {
                 ),
                 toolNames,
             )
+
+            val addOpsTool = tools.first { it.jsonObject["name"]!!.jsonPrimitive.content == "blueprint_add_ops" }.jsonObject
+            val addOpsItemProps = addOpsTool["inputSchema"]!!.jsonObject["properties"]!!
+                .jsonObject["ops"]!!.jsonObject["items"]!!.jsonObject["properties"]!!.jsonObject
+            assertTrue(addOpsItemProps.containsKey("ridge_axis"))
+            assertTrue(addOpsItemProps.containsKey("step"))
+
+            val updateOpTool = tools.first { it.jsonObject["name"]!!.jsonPrimitive.content == "blueprint_update_op" }.jsonObject
+            val updateOpProps = updateOpTool["inputSchema"]!!.jsonObject["properties"]!!
+                .jsonObject["op"]!!.jsonObject["properties"]!!.jsonObject
+            assertTrue(updateOpProps.containsKey("center"))
+            assertTrue(updateOpProps.containsKey("fill_under"))
 
             val buildContextResponse = postMcp(
                 endpoint = endpoint,
@@ -458,6 +475,50 @@ class ArchicaMcpServerIntegrationTest {
             assertFalse(server.start())
             assertFalse(server.isRunning)
             server.stop()
+        }
+    }
+
+    @Test
+    fun `runtime server controller supports stop start and port rebind while keeping loopback security`() = runBlocking {
+        val world = FakeWorldContextSource()
+        val controller = ArchicaMcpServerController(
+            spatialContext = LocalSpatialContextService(world),
+            blueprintService = BlueprintService(FakeBlockCatalog()),
+            initialPort = 0,
+        )
+        assertFalse(controller.status().running)
+        assertTrue(controller.start() is ArchicaMcpServerController.StartOutcome.Started)
+        assertTrue(controller.status().running)
+        assertTrue(controller.start() is ArchicaMcpServerController.StartOutcome.AlreadyRunning)
+
+        // Invalid port leaves running server untouched
+        val invalidOutcome = controller.start(70000)
+        assertTrue(invalidOutcome is ArchicaMcpServerController.StartOutcome.InvalidPort)
+        assertTrue(controller.status().running)
+
+        assertTrue(controller.stop())
+        assertFalse(controller.stop())
+        assertFalse(controller.status().running)
+
+        val freePort = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort }
+        val rebound = controller.start(freePort)
+        assertTrue(rebound is ArchicaMcpServerController.StartOutcome.Started)
+        try {
+            assertEquals("http://127.0.0.1:$freePort/mcp", rebound.status.endpointUrl)
+            val endpoint = URI.create(rebound.status.endpointUrl)
+            val sessionId = initializeMcpSession(endpoint)
+            val listRes = postMcp(endpoint, """{"jsonrpc":"2.0","id":2,"method":"tools/list"}""", sessionId)
+            assertEquals(200, listRes.statusCode())
+
+            val evilReq = HttpRequest.newBuilder(endpoint)
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Origin", "https://evil.example")
+                .POST(HttpRequest.BodyPublishers.ofString("""{"jsonrpc":"2.0","id":1,"method":"initialize"}"""))
+                .build()
+            assertEquals(403, httpClient.send(evilReq, HttpResponse.BodyHandlers.ofString()).statusCode())
+        } finally {
+            controller.stop()
         }
     }
 

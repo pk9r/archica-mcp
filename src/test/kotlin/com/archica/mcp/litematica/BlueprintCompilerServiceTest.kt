@@ -34,10 +34,12 @@ class BlueprintCompilerServiceTest {
         )
         val schematicsDir = tempDir.resolve("schematics")
         val bridge = FakeLitematicaBridge(schematicsDir).apply { worldLoaded = false }
+        val feedbackEvents = mutableListOf<com.archica.mcp.blueprint.PlacementFeedbackEvent>()
         val service = BlueprintService(
             catalog = FakeBlockCatalog(),
             survivalProvider = SurvivalSnapshotProvider.fromWorldSource(world),
             litematicaBridge = bridge,
+            placementFeedbackListener = feedbackEvents::add,
         )
 
         service.create(BlueprintCreateRequest("cottage", BlockPos3i(10, 64, 10), CardinalDirection.NORTH))
@@ -74,11 +76,17 @@ class BlueprintCompilerServiceTest {
         assertFalse(service.list().blueprints.single().hasActivePlacement)
         assertTrue(Files.exists(schematicsDir.resolve("archica/cottage.litematic")))
 
-        // Clear again reports cleared=false, delete_file=true deletes file
+        // Clear again reports cleared=false, delete_file=true evicts cache and deletes file
         val clearedDelete = service.clearPlacement(BlueprintClearPlacementRequest("cottage", deleteFile = true))
         assertFalse(clearedDelete.cleared)
         assertTrue(clearedDelete.deletedFile)
+        assertEquals(listOf(schematicsDir.resolve("archica/cottage.litematic")), bridge.evictedFiles)
         assertFalse(Files.exists(schematicsDir.resolve("archica/cottage.litematic")))
+        assertTrue(bridge.listCalls >= 3)
+        assertEquals(3, feedbackEvents.size)
+        assertTrue(feedbackEvents[0] is com.archica.mcp.blueprint.PlacementFeedbackEvent.Activated)
+        assertTrue((feedbackEvents[1] as com.archica.mcp.blueprint.PlacementFeedbackEvent.Activated).replacedExisting)
+        assertTrue(feedbackEvents[2] is com.archica.mcp.blueprint.PlacementFeedbackEvent.Cleared)
     }
 
     @Test

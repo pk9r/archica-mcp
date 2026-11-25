@@ -38,17 +38,18 @@ object BlueprintTransform {
         return BlueprintBounds.normalized(c1, c2)
     }
 
-    /** Rotates directional blockstate properties (`facing`, `axis`) from local space to [blueprintFacing]. */
+    /** Rotates directional blockstate properties (`facing`, `axis`, and horizontal connection keys) to [blueprintFacing]. */
     fun transformBlockSpec(spec: BlockSpec, blueprintFacing: CardinalDirection): BlockSpec {
         val turns = clockwiseTurns(blueprintFacing)
         if (turns == 0 || spec.properties.isEmpty()) return spec
 
         val updated = LinkedHashMap<String, String>(spec.properties.size)
         for ((key, value) in spec.properties) {
-            updated[key] = when (key) {
-                "facing" -> rotateFacingValue(value, turns)
-                "axis" -> rotateAxisValue(value, turns)
-                else -> value
+            when {
+                key == "facing" -> updated[key] = rotateFacingValue(value, turns)
+                key == "axis" -> updated[key] = rotateAxisValue(value, turns)
+                key in CLOCKWISE_FACINGS -> updated[rotateFacingValue(key, turns)] = value
+                else -> updated[key] = value
             }
         }
         return spec.copy(properties = updated)

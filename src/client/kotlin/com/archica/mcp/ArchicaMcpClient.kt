@@ -2,7 +2,9 @@ package com.archica.mcp
 
 import com.archica.mcp.blueprint.BlueprintService
 import com.archica.mcp.blueprint.ClientBlockCatalog
+import com.archica.mcp.blueprint.PlacementFeedbackEvent
 import com.archica.mcp.blueprint.SurvivalSnapshotProvider
+import com.archica.mcp.command.ArchicaClientCommands
 import com.archica.mcp.context.BuildContextRequest
 import com.archica.mcp.context.BuildContextResult
 import com.archica.mcp.context.ClientThreadDispatcher
@@ -10,7 +12,7 @@ import com.archica.mcp.context.ScanVolumeRequest
 import com.archica.mcp.context.ScanVolumeResult
 import com.archica.mcp.litematica.ClientLitematicaBridge
 import com.archica.mcp.litematica.LitematicSchematicCompiler
-import com.archica.mcp.server.ArchicaEmbeddedMcpServer
+import com.archica.mcp.server.ArchicaMcpServerController
 import com.archica.mcp.server.McpPortConfig
 import com.archica.mcp.server.SpatialContextService
 import kotlinx.coroutines.CoroutineScope
@@ -21,7 +23,10 @@ import kotlinx.coroutines.launch
 import net.fabricmc.api.ClientModInitializer
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents
 import net.fabricmc.loader.api.FabricLoader
+import net.minecraft.ChatFormatting
 import net.minecraft.SharedConstants
+import net.minecraft.client.Minecraft
+import net.minecraft.network.chat.Component
 import org.slf4j.LoggerFactory
 
 /** Fabric client entrypoint for Archica MCP. */
@@ -33,7 +38,7 @@ object ArchicaMcpClient : ClientModInitializer {
     private var serverScope: CoroutineScope? = null
 
     @Volatile
-    private var mcpServer: ArchicaEmbeddedMcpServer? = null
+    private var serverController: ArchicaMcpServerController? = null
 
     @Volatile
     private var stoppingHookRegistered: Boolean = false
@@ -63,18 +68,19 @@ object ArchicaMcpClient : ClientModInitializer {
             survivalProvider = SurvivalSnapshotProvider { dispatcher.readSurvivalSnapshotOrNull() },
             litematicaBridge = litematicaBridge,
             compiler = schematicCompiler,
+            placementFeedbackListener = { event -> notifyPlacementFeedback(event) },
         )
 
-        val server = ArchicaEmbeddedMcpServer(
+        val controller = ArchicaMcpServerController(
             spatialContext = spatialService,
             blueprintService = blueprintService,
-            port = port,
+            initialPort = port,
             serverVersion = version,
         )
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
         synchronized(lifecycleLock) {
-            mcpServer = server
+            serverController = controller
             serverScope = scope
             if (!stoppingHookRegistered) {
                 ClientLifecycleEvents.CLIENT_STOPPING.register {
@@ -84,14 +90,21 @@ object ArchicaMcpClient : ClientModInitializer {
             }
         }
 
+        ArchicaClientCommands.register(
+            controller = controller,
+            blueprintService = blueprintService,
+            litematicaBridge = litematicaBridge,
+            scope = scope,
+        )
+
         scope.launch {
             try {
-                server.start()
+                controller.start()
             } catch (t: Throwable) {
                 logger.warn(
                     "{} unexpected error during async MCP startup on {}: {}",
                     ArchicaModInfo.MOD_NAME,
-                    server.endpointUrl,
+                    controller.status().endpointUrl,
                     t.message ?: t::class.simpleName,
                     t,
                 )
@@ -99,16 +112,33 @@ object ArchicaMcpClient : ClientModInitializer {
         }
     }
 
+    private fun notifyPlacementFeedback(event: PlacementFeedbackEvent) {
+        val text = when (event) {
+            is PlacementFeedbackEvent.Activated -> {
+                val verb = if (event.replacedExisting) "Updated" else "Activated"
+                "[Archica] $verb '${event.blueprintId}' (${event.totalBlocks} blocks) at ${event.worldOrigin.formatTuple()}"
+            }
+            is PlacementFeedbackEvent.Cleared -> {
+                val suffix = if (event.deletedFile) " and deleted .litematic file" else ""
+                "[Archica] Cleared '${event.blueprintId}' placement$suffix"
+            }
+        }
+        val client = Minecraft.getInstance()
+        client.execute {
+            client.player?.sendSystemMessage(Component.literal(text).withStyle(ChatFormatting.AQUA))
+        }
+    }
+
     private fun stopServer() {
-        val serverToStop: ArchicaEmbeddedMcpServer?
+        val controllerToStop: ArchicaMcpServerController?
         val scopeToCancel: CoroutineScope?
         synchronized(lifecycleLock) {
-            serverToStop = mcpServer
+            controllerToStop = serverController
             scopeToCancel = serverScope
-            mcpServer = null
+            serverController = null
             serverScope = null
         }
-        serverToStop?.stop()
+        controllerToStop?.stop()
         scopeToCancel?.cancel()
     }
 }

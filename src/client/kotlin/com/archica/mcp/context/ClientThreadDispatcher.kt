@@ -12,6 +12,8 @@ class ClientThreadDispatcher(
     private val client: Minecraft = Minecraft.getInstance(),
     private val defaultTimeoutMs: Long = DEFAULT_TIMEOUT_MS,
 ) {
+    fun isWorldLoaded(): Boolean = client.level != null && client.player != null
+
     suspend fun getBuildContext(request: BuildContextRequest = BuildContextRequest()): BuildContextResult =
         runOnClientThread {
             BuildContextScanner(ClientWorldContextSource(client)).scan(request)

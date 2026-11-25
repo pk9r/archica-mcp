@@ -18,8 +18,10 @@ class FakeLitematicaBridge(
     var worldLoaded: Boolean = true
     var adapterFailureMessage: String? = null
     val activePlacements = LinkedHashMap<String, PlacementRecord>()
+    val evictedFiles = mutableListOf<Path>()
     var activateCalls: Int = 0
     var clearCalls: Int = 0
+    var listCalls: Int = 0
 
     override fun schematicsDirectory(): Path = schematicsDir
 
@@ -57,5 +59,13 @@ class FakeLitematicaBridge(
         return activePlacements.remove(blueprintId) != null
     }
 
-    override fun hasActivePlacement(blueprintId: String): Boolean = activePlacements.containsKey(blueprintId)
+    override suspend fun evictCachedSchematic(schematicFile: Path) {
+        evictedFiles.add(schematicFile)
+    }
+
+    override suspend fun listActivePlacements(): Set<String> {
+        listCalls++
+        if (!worldLoaded) return emptySet()
+        return activePlacements.keys.toSet()
+    }
 }

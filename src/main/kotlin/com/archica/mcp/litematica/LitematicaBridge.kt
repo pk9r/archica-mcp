@@ -29,6 +29,9 @@ interface LitematicaBridge {
     /** Removes any active placement for [blueprintId]; returns `true` if at least one placement was removed. */
     suspend fun clearPlacement(blueprintId: String): Boolean
 
-    /** Returns `true` if [blueprintId] currently has an active placement managed by Archica. */
-    fun hasActivePlacement(blueprintId: String): Boolean
+    /** Evicts any cached schematic matching [schematicFile] before deleting it from disk. */
+    suspend fun evictCachedSchematic(schematicFile: Path) {}
+
+    /** Returns the set of `blueprintId`s that currently have an active placement managed by Archica. */
+    suspend fun listActivePlacements(): Set<String>
 }

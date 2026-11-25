@@ -125,6 +125,21 @@ data class BlueprintClearPlacementResult(
     val deletedFile: Boolean,
 )
 
+/** Lifecycle notifications emitted when an MCP call activates or clears a Litematica placement. */
+sealed interface PlacementFeedbackEvent {
+    data class Activated(
+        val blueprintId: String,
+        val totalBlocks: Int,
+        val worldOrigin: BlockPos3i,
+        val replacedExisting: Boolean,
+    ) : PlacementFeedbackEvent
+
+    data class Cleared(
+        val blueprintId: String,
+        val deletedFile: Boolean,
+    ) : PlacementFeedbackEvent
+}
+
 /**
  * Thread-safe in-memory store for stateful blueprint draft sessions with monotonic `op_id` allocation.
  */
@@ -287,7 +302,11 @@ class BlueprintSessionStore(
         }
     }
 
-    fun list(): BlueprintListResult {
+    fun sessionCount(): Int = sessions.size
+
+    fun sessionIds(): List<String> = sessions.keys.sorted()
+
+    fun list(activePlacementIds: Set<String>? = null): BlueprintListResult {
         val items = sessions.values.map { session ->
             synchronized(session) {
                 BlueprintListItem(
@@ -295,7 +314,8 @@ class BlueprintSessionStore(
                     origin = session.origin,
                     facing = session.facing,
                     opCount = session.ops.size,
-                    hasActivePlacement = activePlacementChecker(session.blueprintId),
+                    hasActivePlacement = activePlacementIds?.contains(session.blueprintId)
+                        ?: activePlacementChecker(session.blueprintId),
                 )
             }
         }.sortedBy { it.blueprintId }
@@ -349,16 +369,21 @@ class BlueprintSessionStore(
 class BlueprintService(
     catalog: BlockCatalog,
     private val survivalProvider: SurvivalSnapshotProvider = SurvivalSnapshotProvider { null },
-    activePlacementChecker: ((String) -> Boolean)? = null,
+    private val activePlacementChecker: ((String) -> Boolean)? = null,
     private val litematicaBridge: LitematicaBridge? = null,
     private val compiler: LitematicSchematicCompiler = LitematicSchematicCompiler(),
     maxVolume: Long = VoxelGrid.MAX_RASTERIZED_VOLUME,
+    private val placementFeedbackListener: ((PlacementFeedbackEvent) -> Unit)? = null,
 ) {
     private val store = BlueprintSessionStore(
         catalog = catalog,
-        activePlacementChecker = activePlacementChecker ?: { id -> litematicaBridge?.hasActivePlacement(id) ?: false },
+        activePlacementChecker = activePlacementChecker ?: { false },
         maxVolume = maxVolume,
     )
+
+    fun sessionCount(): Int = store.sessionCount()
+
+    fun sessionIds(): List<String> = store.sessionIds()
 
     fun create(request: BlueprintCreateRequest): BlueprintCreateResult = store.create(request)
 
@@ -393,7 +418,15 @@ class BlueprintService(
         )
     }
 
-    fun list(): BlueprintListResult = store.list()
+    suspend fun list(): BlueprintListResult {
+        if (activePlacementChecker != null) {
+            return store.list()
+        }
+        val activeIds = litematicaBridge?.let { bridge ->
+            runCatching { bridge.listActivePlacements() }.getOrElse { emptySet() }
+        } ?: emptySet()
+        return store.list(activeIds)
+    }
 
     suspend fun compile(request: BlueprintCompileRequest): BlueprintCompileResult {
         BlueprintSessionStore.requireValidBlueprintId(request.blueprintId)
@@ -429,6 +462,14 @@ class BlueprintService(
                     worldOrigin = compiled.worldOrigin,
                 )
                 activated = true
+                placementFeedbackListener?.invoke(
+                    PlacementFeedbackEvent.Activated(
+                        blueprintId = eval.blueprintId,
+                        totalBlocks = compiled.totalBlocks,
+                        worldOrigin = compiled.worldOrigin,
+                        replacedExisting = replacedExisting,
+                    ),
+                )
             } catch (e: LitematicaUnavailableException) {
                 val msg = if (e.message.contains(compiled.schematicPath)) {
                     e.message
@@ -492,7 +533,16 @@ class BlueprintService(
             val filePath = schematicsDir
                 .resolve(LitematicSchematicCompiler.ARCHICA_SUBDIR)
                 .resolve("${request.blueprintId}${LitematicSchematicCompiler.LITEMATIC_EXTENSION}")
+            runCatching { bridge.evictCachedSchematic(filePath) }
             deletedFile = withContext(Dispatchers.IO) { Files.deleteIfExists(filePath) }
+        }
+        if (cleared) {
+            placementFeedbackListener?.invoke(
+                PlacementFeedbackEvent.Cleared(
+                    blueprintId = request.blueprintId,
+                    deletedFile = deletedFile,
+                ),
+            )
         }
         return BlueprintClearPlacementResult(
             blueprintId = request.blueprintId,

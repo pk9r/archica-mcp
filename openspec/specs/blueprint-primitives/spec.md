@@ -40,7 +40,7 @@ Primitive coordinates SHALL use local space anchored at `(0, 0, 0)` (`+Y` up, `+
 - **THEN** its world-transformed offset corresponds to `+2` along world `+X` (`[102, 64, 100]`) and its rotated `facing` property becomes `east`
 
 ### Requirement: Block identifier validation and auto-orientation
-Every block reference SHALL accept `<namespace>:<id>` with optional `[key=value,...]` properties and be validated before mutating session state, failing with `INVALID_BLOCK_ID` on unknown blocks or properties. When explicit directional states are omitted, the rasterizer SHALL auto-orient `stairs` (`facing`, `half`), `logs`/pillars (`axis`), and `doors` (`half=lower` + `half=upper`).
+Every block reference SHALL accept `<namespace>:<id>` with optional `[key=value,...]` properties and be validated before mutating session state, failing with `INVALID_BLOCK_ID` on unknown blocks or properties. When explicit directional or connection states are omitted, the rasterizer SHALL auto-orient `stairs` (`facing`, `half`), `logs`/pillars (`axis`), `doors` (`half=lower` + `half=upper`), and `connectable` blocks (`north`, `south`, `east`, `west`).
 
 #### Scenario: Invalid block ID or property rejected before mutating session
 - **WHEN** `blueprint_add_ops` includes `minecraft:nonexistent_block` or `minecraft:oak_stairs[half=sideways]`
@@ -49,6 +49,14 @@ Every block reference SHALL accept `<namespace>:<id>` with optional `[key=value,
 #### Scenario: Door placement emits both lower and upper halves
 - **WHEN** `set_block` places `minecraft:oak_door` at `[2, 1, 0]` without explicit `half`
 - **THEN** the rasterized grid places `half=lower` at `[2, 1, 0]` and `half=upper` at `[2, 2, 0]` with matching `facing`, `hinge`, and `open` defaults
+
+#### Scenario: Connectable panes and fences auto-connect horizontally
+- **WHEN** a `fill_box` places `minecraft:glass_pane` adjacent to solid `minecraft:oak_planks` on local `+X` and another `minecraft:glass_pane` on local `-X` without explicit `north`/`south`/`east`/`west` properties
+- **THEN** the rasterized `glass_pane` emits `east=true`, `west=true`, `north=false`, and `south=false` (and rotates those horizontal flags with `blueprint.facing` on export)
+
+#### Scenario: Explicit connection properties are preserved
+- **WHEN** `set_block` places `minecraft:oak_fence[north=true,east=false]` next to solid blocks on all sides
+- **THEN** the explicit `north=true` and `east=false` properties are preserved while only omitted directions are defaulted
 
 ### Requirement: Sequential rasterization of v1 building primitives
 The system SHALL rasterize operations sequentially (`op_1` to `op_N`) across `set_block`, `fill_box`, `hollow_box`, `line`, `cylinder`, `dome`, `gable_roof`, `staircase`, `replace_box`, `clear_box`, and `repeat_pattern` (`depth <= 4`, `count in 1..256`). Rasterization SHALL enforce a `131,072`-block enclosing volume cap, failing with `VOLUME_TOO_LARGE` when exceeded.

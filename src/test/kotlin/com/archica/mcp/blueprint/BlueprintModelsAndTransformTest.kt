@@ -69,6 +69,19 @@ class BlueprintModelsAndTransformTest {
         val logX = BlockSpec("minecraft:oak_log", mapOf("axis" to "x"))
         assertEquals("z", BlueprintTransform.transformBlockSpec(logX, CardinalDirection.EAST).properties["axis"])
         assertEquals("x", BlueprintTransform.transformBlockSpec(logX, CardinalDirection.SOUTH).properties["axis"])
+
+        val pane = BlockSpec(
+            "minecraft:glass_pane",
+            mapOf("north" to "true", "east" to "false", "south" to "false", "west" to "true"),
+        )
+        assertEquals(
+            mapOf("east" to "true", "south" to "false", "west" to "false", "north" to "true"),
+            BlueprintTransform.transformBlockSpec(pane, CardinalDirection.EAST).properties,
+        )
+        assertEquals(
+            mapOf("south" to "true", "west" to "false", "north" to "false", "east" to "true"),
+            BlueprintTransform.transformBlockSpec(pane, CardinalDirection.SOUTH).properties,
+        )
     }
 
     @Test

@@ -24,6 +24,45 @@ import org.slf4j.LoggerFactory
  * Factory for configuring the Archica MCP [Server] instance and registering spatial context + blueprint tools.
  */
 object ArchicaMcpServerFactory {
+    val PRIMITIVE_TYPES = listOf(
+        "set_block",
+        "fill_box",
+        "hollow_box",
+        "line",
+        "cylinder",
+        "dome",
+        "gable_roof",
+        "staircase",
+        "replace_box",
+        "clear_box",
+        "repeat_pattern",
+    )
+
+    val PRIMITIVE_OP_GUIDE = """
+        Primitive operation object keyed by 'type' using local anchor-relative coordinates (+Y up, +Z forward, +X right; inclusive [from, to] box bounds).
+        Supported variants:
+        - set_block: {type, pos:[x,y,z], block}
+        - fill_box: {type, from:[x,y,z], to:[x,y,z], block}
+        - hollow_box: {type, from:[x,y,z], to:[x,y,z], block, walls_only?:bool}
+        - line: {type, from:[x,y,z], to:[x,y,z], block}
+        - cylinder: {type, center:[x,y,z], radius:int, height:int, block, hollow?:bool}
+        - dome: {type, center:[x,y,z], radius:int, block, hollow?:bool}
+        - gable_roof: {type, from:[x,y,z], to:[x,y,z], block, ridge_block?:string, ridge_axis:"x"|"z", overhang?:int}
+        - staircase: {type, from:[x,y,z], to:[x,y,z], block, width?:int, fill_under?:bool}
+        - replace_box: {type, from:[x,y,z], to:[x,y,z], target, replacement}
+        - clear_box: {type, from:[x,y,z], to:[x,y,z]}
+        - repeat_pattern: {type, op:PrimitiveOp, count:int(1..256), step:[dx,dy,dz]}
+    """.trimIndent()
+
+    val SERVER_INSTRUCTIONS = """
+        Archica MCP builds client-side Litematica holograms in Minecraft without modifying world blocks directly.
+        Recommended workflow:
+        1. Call get_build_context (optional radius 4..24) to read player pose, suggested_origin, 2D surface terrain grid, and carried survival materials. Use scan_volume for bounded 3D RLE slices of existing structures.
+        2. Call blueprint_create(blueprint_id, origin, facing) to start a draft session anchored at origin.
+        3. Use blueprint_add_ops, blueprint_update_op, blueprint_remove_op, and blueprint_undo to refine operations in anchor-relative local coordinates (+Y up, +Z forward, +X right; inclusive box bounds).
+        4. Call blueprint_compile(blueprint_id, activate=true) to write a .litematic schematic and activate/replace the in-world Litematica hologram.
+    """.trimIndent()
+
     private val getBuildContextSchema = ToolSchema(
         properties = buildJsonObject {
             putJsonObject("radius") {
@@ -79,22 +118,9 @@ object ArchicaMcpServerFactory {
             putJsonObject("ops") {
                 put("type", "array")
                 put("minItems", 1)
+                put("description", "Ordered list of building primitives appended to the blueprint session.")
                 putJsonObject("items") {
-                    put("type", "object")
-                    putJsonArray("required") { add("type") }
-                    putJsonObject("properties") {
-                        putJsonObject("type") {
-                            put("type", "string")
-                            putJsonArray("enum") {
-                                listOf(
-                                    "set_block", "fill_box", "hollow_box", "line",
-                                    "cylinder", "dome", "gable_roof", "staircase",
-                                    "replace_box", "clear_box", "repeat_pattern",
-                                ).forEach { add(it) }
-                            }
-                        }
-                    }
-                    put("additionalProperties", true)
+                    putPrimitiveOpObjectSchema("Single building primitive operation. $PRIMITIVE_OP_GUIDE")
                 }
             }
         },
@@ -104,11 +130,12 @@ object ArchicaMcpServerFactory {
     private val blueprintUpdateOpSchema = ToolSchema(
         properties = buildJsonObject {
             putBlueprintIdProperty()
-            putJsonObject("op_id") { put("type", "string") }
+            putJsonObject("op_id") {
+                put("type", "string")
+                put("description", "Target operation ID (for example 'op_2') to replace in place.")
+            }
             putJsonObject("op") {
-                put("type", "object")
-                putJsonArray("required") { add("type") }
-                put("additionalProperties", true)
+                putPrimitiveOpObjectSchema("Replacement building primitive operation. $PRIMITIVE_OP_GUIDE")
             }
         },
         required = listOf("blueprint_id", "op_id", "op"),
@@ -201,6 +228,7 @@ object ArchicaMcpServerFactory {
                     tools = ServerCapabilities.Tools(listChanged = false),
                 ),
             ),
+            instructions = SERVER_INSTRUCTIONS,
         )
 
         server.addTool(
@@ -337,6 +365,94 @@ object ArchicaMcpServerFactory {
         return server
     }
 
+    private fun kotlinx.serialization.json.JsonObjectBuilder.putPrimitiveOpObjectSchema(description: String) {
+        put("type", "object")
+        put("description", description)
+        putJsonArray("required") { add("type") }
+        putJsonObject("properties") {
+            putJsonObject("type") {
+                put("type", "string")
+                putJsonArray("enum") {
+                    PRIMITIVE_TYPES.forEach { add(it) }
+                }
+                put("description", "Primitive operation variant name.")
+            }
+            putInt3Array("pos", "Local [x, y, z] position (set_block).")
+            putInt3Array("from", "Local [x, y, z] start corner (fill_box, hollow_box, line, gable_roof, staircase, replace_box, clear_box).")
+            putInt3Array("to", "Local [x, y, z] end corner (fill_box, hollow_box, line, gable_roof, staircase, replace_box, clear_box).")
+            putInt3Array("center", "Local [x, y, z] center coordinate (cylinder, dome).")
+            putJsonObject("block") {
+                put("type", "string")
+                put("description", "Namespaced block ID with optional [prop=val] states (for example 'minecraft:oak_planks').")
+            }
+            putJsonObject("ridge_block") {
+                put("type", "string")
+                put("description", "Optional ridge cap block ID for gable_roof.")
+            }
+            putJsonObject("ridge_axis") {
+                put("type", "string")
+                putJsonArray("enum") { add("x"); add("z") }
+                put("description", "Roof ridge axis ('x' or 'z') for gable_roof.")
+            }
+            putJsonObject("overhang") {
+                put("type", "integer")
+                put("minimum", 0)
+                put("default", 1)
+                put("description", "Footprint overhang in blocks for gable_roof.")
+            }
+            putJsonObject("radius") {
+                put("type", "integer")
+                put("minimum", 0)
+                put("description", "Horizontal/spherical radius in blocks (cylinder, dome).")
+            }
+            putJsonObject("height") {
+                put("type", "integer")
+                put("minimum", 1)
+                put("description", "Vertical extrusion height in blocks (cylinder).")
+            }
+            putJsonObject("hollow") {
+                put("type", "boolean")
+                put("description", "Emit perimeter/shell only (cylinder default false; dome default true).")
+            }
+            putJsonObject("walls_only") {
+                put("type", "boolean")
+                put("default", false)
+                put("description", "Omit floor and ceiling faces in hollow_box.")
+            }
+            putJsonObject("width") {
+                put("type", "integer")
+                put("minimum", 1)
+                put("default", 1)
+                put("description", "Staircase width in blocks.")
+            }
+            putJsonObject("fill_under") {
+                put("type", "boolean")
+                put("default", false)
+                put("description", "Fill solid support blocks beneath staircase steps.")
+            }
+            putJsonObject("target") {
+                put("type", "string")
+                put("description", "Target block ID or state filter for replace_box.")
+            }
+            putJsonObject("replacement") {
+                put("type", "string")
+                put("description", "Replacement block ID/state for replace_box.")
+            }
+            putJsonObject("op") {
+                put("type", "object")
+                put("description", "Nested primitive operation repeated by repeat_pattern.")
+            }
+            putJsonObject("count") {
+                put("type", "integer")
+                put("minimum", 1)
+                put("maximum", 256)
+                put("description", "Repetition count (1..256) for repeat_pattern.")
+            }
+            putInt3Array("step", "Local [dx, dy, dz] offset applied per iteration in repeat_pattern.")
+        }
+        put("additionalProperties", true)
+    }
+
     private fun kotlinx.serialization.json.JsonObjectBuilder.putBlueprintIdProperty() {
         putJsonObject("blueprint_id") {
             put("type", "string")
@@ -422,5 +538,103 @@ class ArchicaEmbeddedMcpServer(
         }.onFailure { t ->
             logger.warn("{} error while stopping MCP server: {}", ArchicaModInfo.MOD_NAME, t.message, t)
         }
+    }
+}
+
+/**
+ * Thread-safe runtime controller for starting, stopping, and rebinding [ArchicaEmbeddedMcpServer] without restarting the client.
+ */
+class ArchicaMcpServerController(
+    private val spatialContext: SpatialContextService,
+    private val blueprintService: BlueprintService,
+    private val host: String = ArchicaModInfo.DEFAULT_MCP_HOST,
+    initialPort: Int = McpPortConfig.resolvePort(),
+    private val path: String = ArchicaModInfo.DEFAULT_MCP_PATH,
+    private val serverVersion: String = "0.1.0",
+) {
+    data class ServerStatus(
+        val running: Boolean,
+        val host: String,
+        val port: Int,
+        val endpointUrl: String,
+    )
+
+    sealed interface StartOutcome {
+        val status: ServerStatus
+
+        data class Started(override val status: ServerStatus, val restarted: Boolean) : StartOutcome
+        data class AlreadyRunning(override val status: ServerStatus) : StartOutcome
+        data class InvalidPort(val requestedPort: Int, override val status: ServerStatus) : StartOutcome
+        data class BindFailed(override val status: ServerStatus) : StartOutcome
+    }
+
+    private val lock = Any()
+    private var configuredPort: Int = initialPort
+    private var activeServer: ArchicaEmbeddedMcpServer? = null
+
+    fun status(): ServerStatus = synchronized(lock) {
+        currentStatusLocked()
+    }
+
+    fun start(portOverride: Int? = null): StartOutcome = synchronized(lock) {
+        if (portOverride != null && portOverride !in 1..65535) {
+            return StartOutcome.InvalidPort(portOverride, currentStatusLocked())
+        }
+        val targetPort = portOverride ?: configuredPort
+        val current = activeServer
+        if (current != null && current.isRunning) {
+            if (portOverride == null || portOverride == configuredPort) {
+                return StartOutcome.AlreadyRunning(currentStatusLocked())
+            }
+            current.stop()
+            activeServer = null
+        }
+
+        val restarted = current != null
+        val candidate = ArchicaEmbeddedMcpServer(
+            spatialContext = spatialContext,
+            blueprintService = blueprintService,
+            host = host,
+            port = targetPort,
+            path = path,
+            serverVersion = serverVersion,
+        )
+        return if (candidate.start()) {
+            activeServer = candidate
+            configuredPort = targetPort
+            StartOutcome.Started(currentStatusLocked(), restarted = restarted)
+        } else {
+            activeServer = null
+            StartOutcome.BindFailed(
+                ServerStatus(
+                    running = false,
+                    host = host,
+                    port = targetPort,
+                    endpointUrl = "http://$host:$targetPort$path",
+                ),
+            )
+        }
+    }
+
+    fun stop(): Boolean {
+        val toStop = synchronized(lock) {
+            val current = activeServer
+            activeServer = null
+            current
+        } ?: return false
+        toStop.stop()
+        return true
+    }
+
+    suspend fun resolvedPort(): Int? = synchronized(lock) { activeServer }?.resolvedPort()
+
+    private fun currentStatusLocked(): ServerStatus {
+        val running = activeServer?.isRunning == true
+        return ServerStatus(
+            running = running,
+            host = host,
+            port = configuredPort,
+            endpointUrl = "http://$host:$configuredPort$path",
+        )
     }
 }
