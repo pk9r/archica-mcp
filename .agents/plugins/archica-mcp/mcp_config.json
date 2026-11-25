@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "archica-mcp": {
+      "url": "http://127.0.0.1:25580/mcp"
+    }
+  }
+}
