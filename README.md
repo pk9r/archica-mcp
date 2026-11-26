@@ -135,13 +135,23 @@ See the [Antigravity Setup Guide](docs/antigravity-setup.md) for sharing across 
 - [Spatial Context Compression](docs/spatial-context.md) — Player-radius terrain scanning, 2D heightmap + legend format, inventory material summaries, and `scan_volume` RLE slices.
 - [Stateful Blueprints & Building Primitives](docs/blueprint-primitives.md) — Session lifecycle, relative coordinates, auto-facing blockstate rules, and the v1 primitive catalog.
 - [MCP Tools Reference](docs/mcp-tools.md) — Implemented schemas for all 11 tools, request/response payloads, survival material warnings, and error codes.
+- [Upgrade Roadmap (Post-v0.1.0)](docs/roadmap.md) — Planned multi-phase evolution covering persistence/import, primitives & preview, live build progress, and indoor/universal MCP support.
 
 ---
 
 ## Status & Roadmap
+
+### Completed (`v0.1.0` Core)
 
 1. **Documentation & Design Baseline** *(Done)* — Architecture, spatial compression, primitives, and MCP contracts.
 2. **Project Scaffolding & Embedded MCP Server** *(Done)* — Gradle + Fabric + Kotlin setup with Ktor CIO Streamable HTTP `/mcp` endpoint and client-thread dispatcher.
 3. **Player-Radius Spatial Scanner** *(Done)* — World context extraction, heightmap + surface legend encoding, inventory inspection, and RLE `scan_volume`.
 4. **Blueprint Session Store & Primitive Compiler** *(Done)* — In-memory operations, voxel rasterization, auto-orientation, and `.litematic` NBT writer.
 5. **Litematica Bridge & Client UX** *(Done)* — Automatic schematic placement/replacement, survival material checks, `/archica` client commands, and chat feedback.
+
+### Planned (`v0.2.0+` — see [Upgrade Roadmap](docs/roadmap.md))
+
+6. **Phase 1 (`v0.2.0`): Draft Persistence, `.litematic` Import & World Capture** *(Planned)* — Sidecar persistence across restarts, importing existing schematics, and capturing world regions into drafts.
+7. **Phase 2 (`v0.3.0`): Architectural Primitives, Blockstates & Preview** *(Planned)* — Terrain-adapting foundations, symmetry/palette-swap ops, expanded blockstate support, and ASCII slice previews.
+8. **Phase 3 (`v0.4.0`): Live Build Progress & Deeper Litematica Bridge** *(Planned)* — World-vs-hologram completion checks, Y-layer rendering controls, and multi-phase large builds.
+9. **Phase 4 (`v0.5.0`): Smart Context & Universal MCP Client UX** *(Planned)* — Indoor/cave scanning, nearby container inventory, MCP Prompts/Resources for 5x5 guides, and `/archica list`.
