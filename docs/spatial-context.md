@@ -18,7 +18,7 @@ By default, `get_build_context` scans a square region centered on the player's `
 
 ## 2. Concise Context Sections
 
-`get_build_context` returns four compact sections:
+`get_build_context` returns three core sections by default (and an optional fourth inventory section when enabled by the player):
 
 ### A. Player Pose & Anchor
 - `pos`: `(x, y, z)` integer block coordinates of player's feet.
@@ -27,9 +27,9 @@ By default, `get_build_context` scans a square region centered on the player's `
 - `game_mode`: `survival`, `creative`, `adventure`, or `spectator`.
 - `suggested_origin`: Recommended `(x, y, z)` build anchor in front of the player, paired with `ground_y` and `surface_block`.
 
-### B. Material Availability (Hotbar & Inventory)
-- Aggregates block items currently carried in the player's hotbar and main inventory, sorted by count descending and tie-broken lexicographically (e.g., `oak_planks:128, cobblestone:32`).
-- Gives the AI immediate awareness of available building blocks when `game_mode == survival` (or `none` if empty).
+### B. Material Availability (Opt-In Hotbar & Inventory)
+- Disabled by default (`off` on every Minecraft client startup) so the AI designs freely without being biased by pocket items, and `[INVENTORY_MATERIALS]` is omitted from the payload.
+- When the player explicitly runs `/archica inventory on` in-game, `get_build_context` aggregates block items currently carried in the player's hotbar and main inventory, sorted by count descending and tie-broken lexicographically (e.g., `oak_planks:128, cobblestone:32`, or `none` if empty).
 
 ### C. Aligned Non-RLE Heightmap + 1-to-1 Surface Legend
 Each `(x, z)` column in the `(2 * radius + 1) x (2 * radius + 1)` grid is encoded as `<symbol><deltaY>` (or `?` if no surface exists within `[playerY - 16, playerY + 24]`):
@@ -42,13 +42,12 @@ Each `(x, z)` column in the `(2 * radius + 1) x (2 * radius + 1)` grid is encode
 
 ## 3. End-to-End Sample Payload (`get_build_context`)
 
+Default output (inventory tracking `off`):
+
 ```text
 [PLAYER]
 pos=(124, 65, -40) facing=NORTH(yaw=-178, pitch=8) biome=minecraft:plains dim=minecraft:overworld mode=survival
 suggested_origin=(124, 65, -50) ground_y=64 surface_block=minecraft:grass_block
-
-[INVENTORY_MATERIALS]
-oak_planks:192, cobblestone:128, spruce_log:48, oak_stairs:32, glass_pane:24, oak_door:2
 
 [SURFACE_LEGEND]
 .=minecraft:grass_block  ~=minecraft:water  #=minecraft:cobblestone  L=minecraft:oak_leaves
@@ -59,6 +58,13 @@ z-52: .0  .0  .0  ~-1 ~-1 .0  .0  .+1 .+1 ...
 z-51: .0  .0  ~-1 ~-1 .0  .0  .0  .0  .+1 ...
 z-50: .0  .0  .0  .0  .0  L+4 L+5 L+4 .0  ...
 z-49: .0  .0  .0  .0  #+1 #+1 #+1 .0  .0  ...
+```
+
+When `/archica inventory on` is active, `[INVENTORY_MATERIALS]` is included between `[PLAYER]` and `[SURFACE_LEGEND]`:
+
+```text
+[INVENTORY_MATERIALS]
+oak_planks:192, cobblestone:128, spruce_log:48, oak_stairs:32, glass_pane:24, oak_door:2
 ```
 
 ---

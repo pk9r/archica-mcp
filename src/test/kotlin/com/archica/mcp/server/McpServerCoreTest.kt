@@ -59,15 +59,15 @@ class McpServerCoreTest {
     }
 
     @Test
-    fun `parseGetBuildContext handles omitted null and integer radius`() {
-        assertEquals(BuildContextRequest(12), SpatialToolArguments.parseGetBuildContext(null))
+    fun `parseGetBuildContext handles omitted null and integer radius and defaults includeInventory to false`() {
+        assertEquals(BuildContextRequest(12, includeInventory = false), SpatialToolArguments.parseGetBuildContext(null))
         assertEquals(
-            BuildContextRequest(12),
+            BuildContextRequest(12, includeInventory = false),
             SpatialToolArguments.parseGetBuildContext(JsonObject(mapOf("radius" to JsonNull))),
         )
         assertEquals(
-            BuildContextRequest(8),
-            SpatialToolArguments.parseGetBuildContext(buildJsonObject { put("radius", 8) }),
+            BuildContextRequest(8, includeInventory = false),
+            SpatialToolArguments.parseGetBuildContext(buildJsonObject { put("radius", 8); put("include_inventory", true) }),
         )
     }
 

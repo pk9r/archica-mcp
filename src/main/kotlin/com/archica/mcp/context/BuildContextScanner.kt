@@ -9,6 +9,7 @@ import kotlin.math.sin
 /** Input parameters for [BuildContextScanner]. */
 data class BuildContextRequest(
     val radius: Int = BuildContextScanner.DEFAULT_RADIUS,
+    val includeInventory: Boolean = false,
 )
 
 /** Surface sample resolved for a single `(x, z)` column. */
@@ -34,6 +35,7 @@ data class BuildContextResult(
     val originZ: Int,
     val radius: Int,
     val rows: List<TerrainGridRow>,
+    val inventoryIncluded: Boolean = false,
 ) {
     val gridSize: Int
         get() = 2 * radius + 1
@@ -54,13 +56,15 @@ data class BuildContextResult(
         appendLine()
         appendLine()
 
-        appendLine("[INVENTORY_MATERIALS]")
-        if (inventoryMaterials.isEmpty()) {
-            appendLine("none")
-        } else {
-            appendLine(inventoryMaterials.joinToString(", ") { "${formatItemName(it.itemId)}:${it.count}" })
+        if (inventoryIncluded) {
+            appendLine("[INVENTORY_MATERIALS]")
+            if (inventoryMaterials.isEmpty()) {
+                appendLine("none")
+            } else {
+                appendLine(inventoryMaterials.joinToString(", ") { "${formatItemName(it.itemId)}:${it.count}" })
+            }
+            appendLine()
         }
-        appendLine()
 
         appendLine("[SURFACE_LEGEND]")
         appendLine(legend.formatLine())
@@ -147,7 +151,11 @@ class BuildContextScanner(
             columnCache = columnCache,
         )
 
-        val materials = aggregateInventory(source.getInventoryMaterials())
+        val materials = if (request.includeInventory) {
+            aggregateInventory(source.getInventoryMaterials())
+        } else {
+            emptyList()
+        }
 
         return BuildContextResult(
             player = player,
@@ -158,6 +166,7 @@ class BuildContextScanner(
             originZ = minZ,
             radius = radius,
             rows = rows,
+            inventoryIncluded = request.includeInventory,
         )
     }
 

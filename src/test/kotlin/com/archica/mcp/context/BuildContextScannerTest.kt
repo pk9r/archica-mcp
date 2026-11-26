@@ -8,19 +8,32 @@ import kotlin.test.assertTrue
 
 class BuildContextScannerTest {
     @Test
-    fun `default outdoor scan uses radius 12 and omits obstacles`() {
-        val world = FakeWorldContextSource()
+    fun `default outdoor scan uses radius 12 and omits obstacles and inventory`() {
+        val world = FakeWorldContextSource(
+            inventory = listOf(InventoryEntry("minecraft:oak_planks", 64)),
+        )
         world.fillFloor(-20, 20, -20, 20, y = 64)
 
-        val result = BuildContextScanner(world).scan()
+        var inventoryCalls = 0
+        val trackingWorld = object : WorldContextSource by world {
+            override fun getInventoryMaterials(): List<InventoryEntry> {
+                inventoryCalls++
+                return world.getInventoryMaterials()
+            }
+        }
+
+        val result = BuildContextScanner(trackingWorld).scan()
         assertEquals(12, result.radius)
         assertEquals(25, result.gridSize)
         assertEquals(25, result.rows.size)
         result.rows.forEach { assertEquals(25, it.cells.size) }
+        assertFalse(result.inventoryIncluded)
+        assertTrue(result.inventoryMaterials.isEmpty())
+        assertEquals(0, inventoryCalls)
 
         val text = result.formatText()
         assertTrue(text.contains("[PLAYER]"))
-        assertTrue(text.contains("[INVENTORY_MATERIALS]"))
+        assertFalse(text.contains("[INVENTORY_MATERIALS]"))
         assertTrue(text.contains("[SURFACE_LEGEND]"))
         assertTrue(text.contains("[TERRAIN_GRID origin=(-12, -12) size=25x25 ref_y=65]"))
         assertFalse(text.contains("[OBSTACLES]"))
@@ -115,7 +128,7 @@ class BuildContextScannerTest {
     }
 
     @Test
-    fun `inventory materials aggregate across slots and sort descending`() {
+    fun `inventory materials aggregate across slots and sort descending when included`() {
         val world = FakeWorldContextSource(
             inventory = listOf(
                 InventoryEntry("minecraft:oak_planks", 64),
@@ -126,7 +139,8 @@ class BuildContextScannerTest {
         )
         world.fillFloor(-4, 4, -4, 4, y = 64)
 
-        val result = BuildContextScanner(world).scan(BuildContextRequest(radius = 4))
+        val result = BuildContextScanner(world).scan(BuildContextRequest(radius = 4, includeInventory = true))
+        assertTrue(result.inventoryIncluded)
         assertEquals(
             listOf(
                 InventoryEntry("minecraft:oak_planks", 128),
@@ -135,7 +149,15 @@ class BuildContextScannerTest {
             ),
             result.inventoryMaterials,
         )
-        assertTrue(result.formatText().contains("oak_planks:128, cobblestone:32, glass_pane:32"))
+        val text = result.formatText()
+        assertTrue(text.contains("[INVENTORY_MATERIALS]"))
+        assertTrue(text.contains("oak_planks:128, cobblestone:32, glass_pane:32"))
+
+        val emptyWorld = FakeWorldContextSource()
+        emptyWorld.fillFloor(-4, 4, -4, 4, y = 64)
+        val emptyResult = BuildContextScanner(emptyWorld).scan(BuildContextRequest(radius = 4, includeInventory = true))
+        assertTrue(emptyResult.inventoryIncluded)
+        assertTrue(emptyResult.formatText().contains("[INVENTORY_MATERIALS]\nnone"))
     }
 
     @Test

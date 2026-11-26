@@ -28,6 +28,7 @@ import net.minecraft.SharedConstants
 import net.minecraft.client.Minecraft
 import net.minecraft.network.chat.Component
 import org.slf4j.LoggerFactory
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Fabric client entrypoint for Archica MCP. */
 object ArchicaMcpClient : ClientModInitializer {
@@ -50,10 +51,11 @@ object ArchicaMcpClient : ClientModInitializer {
             .map { it.metadata.version.friendlyString }
             .orElse("0.1.0")
 
+        val inventoryEnabled = AtomicBoolean(false)
         val dispatcher = ClientThreadDispatcher()
         val spatialService = object : SpatialContextService {
             override suspend fun getBuildContext(request: BuildContextRequest): BuildContextResult =
-                dispatcher.getBuildContext(request)
+                dispatcher.getBuildContext(request.copy(includeInventory = inventoryEnabled.get()))
 
             override suspend fun scanVolume(request: ScanVolumeRequest): ScanVolumeResult =
                 dispatcher.scanVolume(request)
@@ -65,7 +67,9 @@ object ArchicaMcpClient : ClientModInitializer {
         )
         val blueprintService = BlueprintService(
             catalog = ClientBlockCatalog(),
-            survivalProvider = SurvivalSnapshotProvider { dispatcher.readSurvivalSnapshotOrNull() },
+            survivalProvider = SurvivalSnapshotProvider {
+                if (!inventoryEnabled.get()) null else dispatcher.readSurvivalSnapshotOrNull()
+            },
             litematicaBridge = litematicaBridge,
             compiler = schematicCompiler,
             placementFeedbackListener = { event -> notifyPlacementFeedback(event) },
@@ -95,6 +99,7 @@ object ArchicaMcpClient : ClientModInitializer {
             blueprintService = blueprintService,
             litematicaBridge = litematicaBridge,
             scope = scope,
+            inventoryEnabled = inventoryEnabled,
         )
 
         scope.launch {

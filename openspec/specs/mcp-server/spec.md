@@ -43,11 +43,15 @@ The embedded MCP server SHALL start asynchronously during client initialization 
 - **THEN** the embedded MCP server stops gracefully and releases its bound socket
 
 ### Requirement: Spatial context tool exposure for get_build_context
-The MCP server SHALL register `get_build_context` accepting an optional integer `radius` (default `12`) and returning the compact `[PLAYER]`, `[INVENTORY_MATERIALS]`, `[SURFACE_LEGEND]`, and `[TERRAIN_GRID]` text payload for the loaded player and world.
+The MCP server SHALL register `get_build_context` accepting an optional integer `radius` (default `12`) and returning the compact `[PLAYER]`, optional `[INVENTORY_MATERIALS]` (included only when player inventory tracking is enabled), `[SURFACE_LEGEND]`, and `[TERRAIN_GRID]` text payload for the loaded player and world.
 
 #### Scenario: Calling get_build_context with custom radius
-- **WHEN** a connected MCP client calls `tools/call` for `get_build_context` with `{"radius": 8}` while a world is loaded
-- **THEN** the server returns `isError = false` with the compact `17x17` text payload generated for the loaded player and world
+- **WHEN** a connected MCP client calls `tools/call` for `get_build_context` with `{"radius": 8}` while a world is loaded and inventory tracking is disabled (the default)
+- **THEN** the server returns `isError = false` with the compact `17x17` text payload containing `[PLAYER]`, `[SURFACE_LEGEND]`, and `[TERRAIN_GRID]` without `[INVENTORY_MATERIALS]`
+
+#### Scenario: Calling get_build_context when player has enabled inventory tracking
+- **WHEN** a connected MCP client calls `tools/call` for `get_build_context` while a world is loaded and the player has enabled inventory tracking
+- **THEN** the server returns `isError = false` including `[INVENTORY_MATERIALS]` alongside `[PLAYER]`, `[SURFACE_LEGEND]`, and `[TERRAIN_GRID]`
 
 ### Requirement: Spatial context tool exposure for scan_volume
 The MCP server SHALL register `scan_volume` accepting required 3-integer arrays `min` and `max` plus optional boolean `include_states` (default `false`), and returning the compact `[VOLUME]`, `[PALETTE]`, and RLE Y-slice text payload.
@@ -119,11 +123,11 @@ The MCP server SHALL register `blueprint_clear_placement` accepting required `bl
 - **THEN** the server returns `isError = false` with `cleared = true` and `deleted_file = true`
 
 ### Requirement: MCP initialization instructions and primitive schema guidance
-The MCP server SHALL include concise `instructions` in its initialization metadata describing the recommended inspect-draft-compile workflow and anchor-relative coordinate convention (`+Y` up, `+Z` forward, `+X` right), and SHALL advertise detailed parameter guidance for all 11 primitive types in `blueprint_add_ops` and `blueprint_update_op` schemas.
+The MCP server SHALL include concise `instructions` in its initialization metadata describing the recommended inspect-draft-compile workflow, anchor-relative coordinate convention (`+Y` up, `+Z` forward, `+X` right), and player-controlled opt-in inventory reporting (omitted by default), and SHALL advertise detailed parameter guidance for all 11 primitive types in `blueprint_add_ops` and `blueprint_update_op` schemas.
 
 #### Scenario: Initialize response includes workflow instructions
 - **WHEN** an MCP client completes the `initialize` handshake against `/mcp`
-- **THEN** the server result includes non-empty `instructions` documenting `get_build_context`, stateful blueprint ops, and local-to-world coordinate orientation
+- **THEN** the server result includes non-empty `instructions` documenting `get_build_context`, stateful blueprint ops, local-to-world coordinate orientation, and that inventory materials are omitted unless enabled by the player
 
 #### Scenario: Tool listing includes primitive parameter documentation
 - **WHEN** an MCP client sends `tools/list`

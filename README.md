@@ -35,11 +35,11 @@ Instead of giving an AI raw world-editing commands that can grief builds or requ
 ## Key Capabilities (v1)
 
 - **Embedded Localhost MCP Server**: Runs directly inside the Minecraft client JVM using `io.modelcontextprotocol:kotlin-sdk` (`0.16.0`) + Ktor CIO Streamable HTTP (`127.0.0.1:25580/mcp`), requiring no external runtime or separate Node/Python wrapper.
-- **Concise Spatial Context**: Summarizes terrain around the player (`radius = 12` default, `4..24` range) into a compact 2D relative heightmap, surface block legend, pose/anchor suggestion, and hotbar/inventory material counts, plus on-demand `scan_volume` 3D RLE slices.
+- **Concise Spatial Context**: Summarizes terrain around the player (`radius = 12` default, `4..24` range) into a compact 2D relative heightmap, surface block legend, pose/anchor suggestion, and opt-in hotbar/inventory material counts (off by default unless enabled via `/archica inventory on`), plus on-demand `scan_volume` 3D RLE slices.
 - **Stateful Blueprint Sessions**: Agents create named in-memory drafts (`blueprint_id`) and iteratively append, update, remove, or undo operations instead of regenerating entire builds from scratch on every revision.
 - **High-Level Building Primitives**: Express structures with `set_block`, `fill_box`, `hollow_box`, `line`, `cylinder`, `dome`, `gable_roof`, `staircase`, `replace_box`, `clear_box`, and `repeat_pattern` using anchor-relative `(0, 0, 0)` coordinates and automatic blockstate orientation (`stairs`, `logs`, `doors`, horizontal `connectable` panes/fences).
 - **File-Backed `.litematic` Compilation & Auto-Activation**: Writes standard `.litematic` NBT files under `.minecraft/schematics/archica/` and automatically loads/replaces the active Litematica placement so refinements update the in-world hologram without stacking duplicates.
-- **In-Game Client Controls (`/archica`)**: Inspect status (`/archica status`), start/stop/rebind the embedded MCP server at runtime (`/archica mcp start [port]`, `/archica mcp stop`), clear active holograms (`/archica clear <blueprint_id|all>`), and receive concise chat notifications when placements change.
+- **In-Game Client Controls (`/archica`)**: Inspect status (`/archica status`), toggle opt-in inventory tracking (`/archica inventory [on|off]`, off by default and reset on restart), start/stop/rebind the embedded MCP server at runtime (`/archica mcp start [port]`, `/archica mcp stop`), clear active holograms (`/archica clear <blueprint_id|all>`), and receive concise chat notifications when placements change.
 
 ---
 

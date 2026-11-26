@@ -126,5 +126,19 @@ class BlueprintSessionStoreTest {
         world.player = world.player.copy(gameMode = "creative")
         val creativeInspect = service.inspect("cabin")
         assertNull(creativeInspect.survivalCheck)
+
+        // When inventory tracking is disabled (provider returns null), survivalCheck is omitted even in survival mode
+        world.player = world.player.copy(gameMode = "survival")
+        val disabledService = BlueprintService(
+            catalog = catalog,
+            survivalProvider = SurvivalSnapshotProvider { null },
+        )
+        disabledService.create(BlueprintCreateRequest("cabin_no_inv", BlockPos3i(0, 64, 0)))
+        val disabledAdd = disabledService.addOps(
+            "cabin_no_inv",
+            listOf(PrimitiveOp.FillBox(BlockPos3i(0, 0, 0), BlockPos3i(2, 0, 2), "minecraft:oak_planks")),
+        )
+        assertNull(disabledAdd.survivalCheck)
+        assertNull(disabledService.inspect("cabin_no_inv").survivalCheck)
     }
 }

@@ -10,7 +10,7 @@ Archica MCP exposes 11 tools grouped into **Spatial Context** (reading player su
 
 | Category | Tool Name | Purpose |
 |---|---|---|
-| Context | `get_build_context` | Returns player pose, suggested anchor, inventory materials, and compact 2D terrain grid around the player. |
+| Context | `get_build_context` | Returns player pose, suggested anchor, compact 2D terrain grid around the player, and optional inventory materials (when enabled in-game). |
 | Context | `scan_volume` | Returns RLE-compressed 3D Y-slices for a bounded world box (`min`..`max`). |
 | Blueprint | `blueprint_create` | Creates or resets a named blueprint draft session with world `origin` and `facing`. |
 | Blueprint | `blueprint_add_ops` | Appends a batch of building primitives and returns assigned `op_id`s + material summary. |
@@ -39,7 +39,7 @@ Scans the outdoor player-radius region (see [Spatial Context Compression](spatia
 }
 ```
 
-**Output:** Returns a concise text payload containing `[PLAYER]`, `[INVENTORY_MATERIALS]`, `[SURFACE_LEGEND]`, and aligned non-RLE `[TERRAIN_GRID]` as defined in [Spatial Context Compression](spatial-context.md).
+**Output:** Returns a concise text payload containing `[PLAYER]`, `[SURFACE_LEGEND]`, and aligned non-RLE `[TERRAIN_GRID]` as defined in [Spatial Context Compression](spatial-context.md) (plus `[INVENTORY_MATERIALS]` only when the player enables `/archica inventory on`).
 
 ---
 
@@ -149,7 +149,7 @@ Appends one or more primitive operations (see [Stateful Blueprints & Building Pr
 }
 ```
 
-> **Note:** When `game_mode` is `survival`, `survival_check.missing_materials` compares required materials against the player's current inventory/hotbar. It is returned as a warning to guide AI material choices and does **not** block drafting or compiling a `.litematic` hologram.
+> **Note:** `survival_check` is omitted by default (player inventory tracking resets to `off` on every launch). When the player runs `/archica inventory on` and `game_mode` is `survival`, `survival_check.missing_materials` compares required materials against the player's current inventory/hotbar as a non-blocking warning and does **not** prevent drafting or compiling a `.litematic` hologram.
 
 ---
 

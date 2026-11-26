@@ -64,7 +64,7 @@ Archica MCP runs entirely inside the Minecraft client JVM. It bridges an externa
 - **Library**: Official `io.modelcontextprotocol:kotlin-sdk` (`0.16.0`) using Ktor CIO (`io.ktor:ktor-server-cio-jvm` `3.5.2`).
 - **Endpoint**: `http://127.0.0.1:<port>/mcp` (default `25580`) via `mcpStreamableHttp(path = "/mcp")`.
 - **Lifecycle**: Starts asynchronously on `Dispatchers.IO` during `ClientModInitializer.onInitializeClient()` and shuts down gracefully on `ClientLifecycleEvents.CLIENT_STOPPING`. If binding fails (e.g., port already in use by another Minecraft instance), startup fails silently with a `WARN` log so the game continues running normally.
-- **Port Configuration & Client Commands**: Default `25580`, overridable at startup via `-Darchica.mcp.port=<port>` (`1..65535`; invalid values log a warning and fall back to `25580`). In-game client commands `/archica status`, `/archica mcp start [port]`, `/archica mcp stop`, and `/archica clear <blueprint_id|all>` provide runtime server control and quick hologram clearance, alongside single-line chat notifications when placements are activated, updated, or cleared. MaLiLib GUI settings remain deferred beyond v1.
+- **Port Configuration & Client Commands**: Default `25580`, overridable at startup via `-Darchica.mcp.port=<port>` (`1..65535`; invalid values log a warning and fall back to `25580`). In-game client commands `/archica status`, `/archica inventory [on|off]`, `/archica mcp start [port]`, `/archica mcp stop`, and `/archica clear <blueprint_id|all>` provide runtime server control, opt-in player inventory tracking (in-memory, defaulting to `off` on every game launch), and quick hologram clearance, alongside single-line chat notifications when placements are activated, updated, or cleared. MaLiLib GUI settings remain deferred beyond v1.
 
 ### Loopback & DNS-Rebinding Protection
 - The Ktor server binds exclusively to `127.0.0.1` (not `0.0.0.0`), preventing LAN or external network exposure.
@@ -97,7 +97,7 @@ Ktor handles incoming HTTP/MCP requests on background IO/coroutine worker thread
 
 ### Key Rules
 - **Pure-CPU work stays off the main thread**: Managing draft blueprint operations (`blueprint_create`, `blueprint_add_ops`, `blueprint_update_op`, `blueprint_undo`) and rasterizing primitives into an intermediate voxel buffer execute on coroutine dispatchers without blocking frame rendering.
-- **Bounded main-thread operations**: Only world reads (`get_build_context`, `scan_volume`), survival inventory checks, and Litematica placement registration are marshalled via `MinecraftClient.getInstance().execute { ... }` wrapped in a `CompletableDeferred` with a safety timeout (e.g., 5 seconds).
+- **Bounded main-thread operations**: Only world reads (`get_build_context`, `scan_volume`), optional survival inventory checks (only when the player has enabled `/archica inventory on`; otherwise skipped completely off-thread), and Litematica placement registration are marshalled via `MinecraftClient.getInstance().execute { ... }` wrapped in a `CompletableDeferred` with a safety timeout (e.g., 5 seconds).
 - **Missing-World Guard**: If the player is on the Title Screen, disconnecting, or loading into a server (`client.world == null || client.player == null`), main-thread tasks immediately fail cleanly and return a structured MCP tool error (`NO_WORLD_LOADED`) rather than throwing an NPE or hanging.
 
 ---

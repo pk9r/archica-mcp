@@ -57,7 +57,7 @@ object ArchicaMcpServerFactory {
     val SERVER_INSTRUCTIONS = """
         Archica MCP builds client-side Litematica holograms in Minecraft without modifying world blocks directly.
         Recommended workflow:
-        1. Call get_build_context (optional radius 4..24) to read player pose, suggested_origin, 2D surface terrain grid, and carried survival materials. Use scan_volume for bounded 3D RLE slices of existing structures.
+        1. Call get_build_context (optional radius 4..24) to read player pose, suggested_origin, and 2D surface terrain grid (inventory materials and survival_check are omitted by default unless enabled by the player via /archica inventory on). Use scan_volume for bounded 3D RLE slices of existing structures.
         2. Call blueprint_create(blueprint_id, origin, facing) to start a draft session anchored at origin.
         3. Use blueprint_add_ops, blueprint_update_op, blueprint_remove_op, and blueprint_undo to refine operations in anchor-relative local coordinates (+Y up, +Z forward, +X right; inclusive box bounds).
         4. Call blueprint_compile(blueprint_id, activate=true) to write a .litematic schematic and activate/replace the in-world Litematica hologram.
@@ -233,7 +233,7 @@ object ArchicaMcpServerFactory {
 
         server.addTool(
             name = "get_build_context",
-            description = "Returns player pose, suggested build origin, inventory materials, surface legend, and aligned 2D terrain grid.",
+            description = "Returns player pose, suggested build origin, surface legend, and aligned 2D terrain grid (plus inventory materials when enabled by the player).",
             inputSchema = getBuildContextSchema,
             toolAnnotations = readOnlyAnnotations,
         ) { request ->

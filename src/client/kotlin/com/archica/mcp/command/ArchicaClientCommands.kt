@@ -15,10 +15,11 @@ import net.minecraft.ChatFormatting
 import net.minecraft.client.Minecraft
 import net.minecraft.commands.SharedSuggestionProvider
 import net.minecraft.network.chat.Component
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Registers client-side `/archica` commands for inspecting status, controlling the embedded MCP server,
- * and clearing active Archica Litematica placements directly from chat.
+ * toggling opt-in player inventory tracking, and clearing active Archica Litematica placements directly from chat.
  */
 object ArchicaClientCommands {
     fun register(
@@ -26,6 +27,7 @@ object ArchicaClientCommands {
         blueprintService: BlueprintService,
         litematicaBridge: LitematicaBridge,
         scope: CoroutineScope,
+        inventoryEnabled: AtomicBoolean = AtomicBoolean(false),
     ) {
         ClientCommandRegistrationCallback.EVENT.register { dispatcher, _ ->
             dispatcher.register(
@@ -41,6 +43,7 @@ object ArchicaClientCommands {
                                         litematicaBridge.listActivePlacements().sorted()
                                     }.getOrElse { emptyList() }
                                     val stateLabel = if (status.running) "running at ${status.endpointUrl}" else "stopped (configured: ${status.endpointUrl})"
+                                    val inventoryLabel = if (inventoryEnabled.get()) "on" else "off"
                                     val placementsSummary = if (activePlacements.isEmpty()) {
                                         "none"
                                     } else {
@@ -48,12 +51,53 @@ object ArchicaClientCommands {
                                     }
                                     postFeedback(
                                         client,
-                                        "[Archica] MCP: $stateLabel | drafts: $drafts | active placements: $placementsSummary",
+                                        "[Archica] MCP: $stateLabel | inventory: $inventoryLabel | drafts: $drafts | active placements: $placementsSummary",
                                         if (status.running) ChatFormatting.GREEN else ChatFormatting.YELLOW,
                                     )
                                 }
                                 1
                             },
+                    )
+                    .then(
+                        ClientCommands.literal("inventory")
+                            .executes { ctx ->
+                                val enabled = inventoryEnabled.get()
+                                val msg = if (enabled) {
+                                    "[Archica] Inventory tracking is ON (get_build_context and survival_check include player inventory)."
+                                } else {
+                                    "[Archica] Inventory tracking is OFF (player inventory is ignored; resets to off on restart)."
+                                }
+                                postFeedback(
+                                    ctx.source.client,
+                                    msg,
+                                    if (enabled) ChatFormatting.GREEN else ChatFormatting.GRAY,
+                                )
+                                1
+                            }
+                            .then(
+                                ClientCommands.literal("on")
+                                    .executes { ctx ->
+                                        inventoryEnabled.set(true)
+                                        postFeedback(
+                                            ctx.source.client,
+                                            "[Archica] Inventory tracking enabled for this session (resets to off on restart).",
+                                            ChatFormatting.GREEN,
+                                        )
+                                        1
+                                    },
+                            )
+                            .then(
+                                ClientCommands.literal("off")
+                                    .executes { ctx ->
+                                        inventoryEnabled.set(false)
+                                        postFeedback(
+                                            ctx.source.client,
+                                            "[Archica] Inventory tracking disabled (player inventory will be ignored).",
+                                            ChatFormatting.YELLOW,
+                                        )
+                                        1
+                                    },
+                            ),
                     )
                     .then(
                         ClientCommands.literal("mcp")

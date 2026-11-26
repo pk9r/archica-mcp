@@ -3,9 +3,16 @@ package com.archica.mcp.server
 import com.archica.mcp.blueprint.BlueprintService
 import com.archica.mcp.blueprint.FakeBlockCatalog
 import com.archica.mcp.blueprint.SurvivalSnapshotProvider
+import com.archica.mcp.context.BuildContextRequest
+import com.archica.mcp.context.BuildContextResult
+import com.archica.mcp.context.BuildContextScanner
 import com.archica.mcp.context.FakeWorldContextSource
 import com.archica.mcp.context.InventoryEntry
+import com.archica.mcp.context.ScanVolumeRequest
+import com.archica.mcp.context.ScanVolumeResult
+import com.archica.mcp.context.VolumeScanner
 import com.archica.mcp.litematica.FakeLitematicaBridge
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
@@ -46,12 +53,22 @@ class ArchicaMcpServerIntegrationTest {
         world.setBlock(1, 65, 1, "minecraft:cobblestone")
         world.setBlock(2, 65, 1, "minecraft:oak_stairs", mapOf("facing" to "east", "half" to "bottom", "waterlogged" to "false"))
 
+        val inventoryEnabled = AtomicBoolean(false)
+        val spatialService = object : SpatialContextService {
+            override suspend fun getBuildContext(request: BuildContextRequest): BuildContextResult =
+                BuildContextScanner(world).scan(request.copy(includeInventory = inventoryEnabled.get()))
+
+            override suspend fun scanVolume(request: ScanVolumeRequest): ScanVolumeResult =
+                VolumeScanner(world).scan(request)
+        }
         val blueprintService = BlueprintService(
             catalog = FakeBlockCatalog(),
-            survivalProvider = SurvivalSnapshotProvider.fromWorldSource(world),
+            survivalProvider = SurvivalSnapshotProvider {
+                if (!inventoryEnabled.get()) null else SurvivalSnapshotProvider.fromWorldSource(world).getSnapshotOrNull()
+            },
         )
         val server = ArchicaEmbeddedMcpServer(
-            spatialContext = LocalSpatialContextService(world),
+            spatialContext = spatialService,
             blueprintService = blueprintService,
             port = 0,
         )
@@ -72,6 +89,7 @@ class ArchicaMcpServerIntegrationTest {
             assertNotNull(instructions, "Expected server instructions in initialize result")
             assertTrue(instructions.contains("get_build_context"))
             assertTrue(instructions.contains("+Z forward"))
+            assertTrue(instructions.contains("omitted by default"))
             val sessionId = initResponse.headers().firstValue("mcp-session-id").orElse(null)
             assertNotNull(sessionId, "Expected mcp-session-id response header")
 
@@ -129,7 +147,21 @@ class ArchicaMcpServerIntegrationTest {
             assertFalse(buildResult["isError"]?.jsonPrimitive?.boolean ?: false)
             val buildText = firstTextContent(buildResult)
             assertTrue(buildText.contains("[PLAYER]"))
+            assertFalse(buildText.contains("[INVENTORY_MATERIALS]"))
             assertTrue(buildText.contains("[TERRAIN_GRID origin=(-4, -4) size=9x9 ref_y=65]"))
+
+            // When player enables inventory tracking, get_build_context includes [INVENTORY_MATERIALS]
+            inventoryEnabled.set(true)
+            val enabledBuildContextResponse = postMcp(
+                endpoint = endpoint,
+                sessionId = sessionId,
+                body = """{"jsonrpc":"2.0","id":301,"method":"tools/call","params":{"name":"get_build_context","arguments":{"radius":4}}}""",
+            )
+            assertEquals(200, enabledBuildContextResponse.statusCode())
+            val enabledBuildText = firstTextContent(extractJsonRpcResult(enabledBuildContextResponse.body()))
+            assertTrue(enabledBuildText.contains("[INVENTORY_MATERIALS]"))
+            assertTrue(enabledBuildText.contains("oak_planks:4"))
+            inventoryEnabled.set(false)
 
             val scanVolumeResponse = postMcp(
                 endpoint = endpoint,
