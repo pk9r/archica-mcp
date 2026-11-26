@@ -35,11 +35,11 @@ Instead of giving an AI raw world-editing commands that can grief builds or requ
 ## Key Capabilities (v1)
 
 - **Embedded Localhost MCP Server**: Runs directly inside the Minecraft client JVM using `io.modelcontextprotocol:kotlin-sdk` (`0.16.0`) + Ktor CIO Streamable HTTP (`127.0.0.1:25580/mcp`), requiring no external runtime or separate Node/Python wrapper.
-- **Concise Spatial Context**: Summarizes terrain around the player (`radius = 12` default, `4..24` range) into a compact 2D relative heightmap, surface block legend, pose/anchor suggestion, and opt-in hotbar/inventory material counts (off by default unless enabled via `/archica inventory on`), plus on-demand `scan_volume` 3D RLE slices.
+- **Concise Spatial Context**: Summarizes terrain around the player (`radius = 12` default, `4..24` range) into a compact 2D relative heightmap, surface block legend, pose/anchor suggestion, and opt-in hotbar/inventory material counts (off by default on every restart unless enabled in-session via the config screen or `/archica inventory on`), plus on-demand `scan_volume` 3D RLE slices.
 - **Stateful Blueprint Sessions**: Agents create named in-memory drafts (`blueprint_id`) and iteratively append, update, remove, or undo operations instead of regenerating entire builds from scratch on every revision.
 - **High-Level Building Primitives**: Express structures with `set_block`, `fill_box`, `hollow_box`, `line`, `cylinder`, `dome`, `gable_roof`, `staircase`, `replace_box`, `clear_box`, and `repeat_pattern` using anchor-relative `(0, 0, 0)` coordinates and automatic blockstate orientation (`stairs`, `logs`, `doors`, horizontal `connectable` panes/fences).
 - **File-Backed `.litematic` Compilation & Auto-Activation**: Writes standard `.litematic` NBT files under `.minecraft/schematics/archica/` and automatically loads/replaces the active Litematica placement so refinements update the in-world hologram without stacking duplicates.
-- **In-Game Client Controls (`/archica`)**: Inspect status (`/archica status`), toggle opt-in inventory tracking (`/archica inventory [on|off]`, off by default and reset on restart), start/stop/rebind the embedded MCP server at runtime (`/archica mcp start [port]`, `/archica mcp stop`), clear active holograms (`/archica clear <blueprint_id|all>`), and receive concise chat notifications when placements change.
+- **In-Game Config Screen & Client Controls**: Configure `mcpPort`, `autoStartMcp`, and `showPlacementFeedback` (persisted in `config/archica-mcp.json`) plus session-only inventory tracking, live MCP start/stop/restart, clipboard URL copy, and active hologram clearance from **Mod Menu** (`Esc -> Mods -> Archica MCP -> Config`), bare `/archica`, or the optional **Open Archica Config** keybind — alongside `/archica status`, `/archica inventory [on|off]`, `/archica mcp start [port]`, `/archica mcp stop`, and `/archica clear <blueprint_id|all>`.
 
 ---
 
@@ -65,17 +65,22 @@ Instead of giving an AI raw world-editing commands that can grief builds or requ
 ./gradlew test build
 ```
 
-The packaged mod jar (including Jar-in-Jar Ktor/MCP dependencies) is output to `build/libs/archica-mcp-0.1.0.jar`. Place it in your Fabric `26.3` `mods/` directory alongside **Fabric API**, **Fabric Language Kotlin**, **MaLiLib**, and **Litematica**.
+The packaged mod jar (including Jar-in-Jar Ktor/MCP dependencies) is output to `build/libs/archica-mcp-0.1.0.jar`. Place it in your Fabric `26.3` `mods/` directory alongside **Fabric API**, **Fabric Language Kotlin**, **MaLiLib**, and **Litematica** (and optionally **Mod Menu** to open the config screen from `Esc -> Mods`).
 
 ### Connecting an MCP Client
 
-Launch Minecraft and join a world (or even draft offline on the title screen). By default, Archica MCP binds strictly to loopback at:
+Launch Minecraft and join a world (or even draft offline on the title screen). By default (`autoStartMcp = true`), Archica MCP binds strictly to loopback at:
 
 ```text
 http://127.0.0.1:25580/mcp
 ```
 
-Override the startup port via `-Darchica.mcp.port=<port>`, or manage it in-game using `/archica status`, `/archica mcp start [port]`, `/archica mcp stop`, and `/archica clear <blueprint_id|all>`.
+Configure and manage the mod without memorizing slash commands via:
+- **Mod Menu** *(optional)*: `Esc -> Mods -> Archica MCP -> Config`
+- **Quick command / keybind**: Run `/archica` (no arguments) in chat, or bind **Open Archica Config** under *Options -> Controls -> Key Binds* (unbound by default)
+- **Persisted config file** (`.minecraft/config/archica-mcp.json`): stores `mcpPort` (`25580`), `autoStartMcp` (`true`), and `showPlacementFeedback` (`true`). Inventory tracking is **never** persisted and always resets to `off` on restart.
+- **Startup port precedence**: `-Darchica.mcp.port=<port>` > `config/archica-mcp.json` (`mcpPort`) > `25580`.
+- **Slash subcommands** *(also available)*: `/archica status`, `/archica inventory [on|off]`, `/archica mcp start [port]`, `/archica mcp stop`, and `/archica clear <blueprint_id|all>`.
 
 ### Example MCP Client Configuration
 

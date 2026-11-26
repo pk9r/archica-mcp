@@ -15,6 +15,12 @@
         "adapter": "kotlin",
         "value": "com.archica.mcp.ArchicaMcpClient"
       }
+    ],
+    "modmenu": [
+      {
+        "adapter": "kotlin",
+        "value": "com.archica.mcp.ui.ArchicaModMenuIntegration"
+      }
     ]
   },
   "depends": {
@@ -26,5 +32,8 @@
   },
   "recommends": {
     "litematica": "*"
+  },
+  "suggests": {
+    "modmenu": "*"
   }
 }

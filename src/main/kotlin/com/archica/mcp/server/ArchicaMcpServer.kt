@@ -626,6 +626,15 @@ class ArchicaMcpServerController(
         return true
     }
 
+    /** Updates the configured port for future [start] calls when the server is currently stopped. */
+    fun updateConfiguredPort(port: Int): Boolean = synchronized(lock) {
+        if (port !in 1..65535 || activeServer?.isRunning == true) {
+            return false
+        }
+        configuredPort = port
+        true
+    }
+
     suspend fun resolvedPort(): Int? = synchronized(lock) { activeServer }?.resolvedPort()
 
     private fun currentStatusLocked(): ServerStatus {

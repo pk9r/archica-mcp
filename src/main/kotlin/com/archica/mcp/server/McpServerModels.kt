@@ -45,7 +45,7 @@ class LocalSpatialContextService(
 }
 
 /**
- * Resolves the embedded MCP server port from `-Darchica.mcp.port`, falling back to [ArchicaModInfo.DEFAULT_MCP_PORT].
+ * Resolves the embedded MCP server port from `-Darchica.mcp.port`, falling back to [fallbackPort] (default [ArchicaModInfo.DEFAULT_MCP_PORT]).
  */
 object McpPortConfig {
     const val PORT_PROPERTY = "archica.mcp.port"
@@ -53,18 +53,20 @@ object McpPortConfig {
 
     fun resolvePort(
         rawProperty: String? = System.getProperty(PORT_PROPERTY),
+        fallbackPort: Int = ArchicaModInfo.DEFAULT_MCP_PORT,
         onWarning: (String) -> Unit = { message -> logger.warn(message) },
     ): Int {
+        val safeFallback = if (fallbackPort in 1..65535) fallbackPort else ArchicaModInfo.DEFAULT_MCP_PORT
         if (rawProperty == null) {
-            return ArchicaModInfo.DEFAULT_MCP_PORT
+            return safeFallback
         }
         val parsed = rawProperty.trim().toIntOrNull()
         if (parsed == null || parsed !in 1..65535) {
             onWarning(
                 "Invalid $PORT_PROPERTY value '$rawProperty' (expected integer 1..65535); " +
-                    "falling back to default port ${ArchicaModInfo.DEFAULT_MCP_PORT}.",
+                    "falling back to port $safeFallback.",
             )
-            return ArchicaModInfo.DEFAULT_MCP_PORT
+            return safeFallback
         }
         return parsed
     }

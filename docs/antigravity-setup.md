@@ -126,15 +126,26 @@ If you use Archica MCP across multiple building workspaces without registering i
 
 ---
 
-## 5. Custom Port & In-Game Controls
+## 5. Configuration Screen, Custom Port & In-Game Controls
 
-If `25580` is already in use or you run multiple Minecraft instances, override the port via JVM argument or in-game client commands (no server operator permissions required):
+You can configure and control Archica MCP from a native in-game screen without memorizing slash commands:
 
-- **Startup JVM property**: `-Darchica.mcp.port=<port>` (`1..65535`; non-numeric or out-of-range values log a warning and fall back to `25580`).
-- **In-game `/archica` commands**:
-  - `/archica status` — prints whether the server is running or stopped, the active loopback endpoint URL, in-memory draft count, and active `archica:` placements.
-  - `/archica mcp start [port]` — starts or rebinds the embedded loopback server at runtime.
-  - `/archica mcp stop` — stops the embedded MCP server cleanly.
+- **Mod Menu** *(optional)*: `Esc -> Mods -> Archica MCP -> Config`
+- **Fallback without Mod Menu**: type `/archica` in chat, or assign a key to **Open Archica Config** in *Options -> Controls -> Key Binds* (unbound by default)
+- **Screen controls**:
+  - View live MCP status & endpoint URL, edit `mcpPort` (`1..65535`), click **Start / Apply & Restart** or **Stop**, and **Copy URL** directly to your clipboard.
+  - Toggle persistent preferences **Auto-start MCP on Launch** (`autoStartMcp`) and **Placement Chat Notices** (`showPlacementFeedback`).
+  - Toggle session-only **Inventory Tracking** (always resets to `off` on Minecraft restart; never saved to disk).
+  - View active `archica:` hologram count and click **Clear All Active Holograms**.
+- **Config file & startup port precedence**:
+  - Non-privacy preferences are persisted to `.minecraft/config/archica-mcp.json` (`mcpPort`, `autoStartMcp`, `showPlacementFeedback`).
+  - Startup port resolution order: `-Darchica.mcp.port=<port>` JVM property > `config/archica-mcp.json` (`mcpPort`) > `25580` (non-numeric or out-of-range overrides log a warning and fall back).
+  - If `autoStartMcp` is `false`, Archica MCP skips binding at startup until you click **Start** in the config screen or run `/archica mcp start`.
+- **In-game `/archica` subcommands** *(all preserved)*:
+  - `/archica` — opens the Archica MCP configuration screen.
+  - `/archica status` — prints whether the server is running or stopped, the active loopback endpoint URL, inventory tracking state, in-memory draft count, and active `archica:` placements.
+  - `/archica inventory [on|off]` — queries or toggles session-only player inventory reporting.
+  - `/archica mcp start [port]` / `/archica mcp stop` — starts, stops, or rebinds the embedded loopback server at runtime.
   - `/archica clear <blueprint_id|all>` — removes active Litematica hologram placements from chat while keeping `.litematic` files on disk.
 
 Whenever you change the listening port, update `"url"` in `.agents/plugins/archica-mcp/mcp_config.json` to match (for example, `http://127.0.0.1:25590/mcp`) and reconnect/reload the MCP server in Antigravity.

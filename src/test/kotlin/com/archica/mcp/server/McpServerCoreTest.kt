@@ -59,6 +59,21 @@ class McpServerCoreTest {
     }
 
     @Test
+    fun `port config uses persisted fallback when property unset or invalid and prefers valid jvm override`() {
+        val warnings = mutableListOf<String>()
+        assertEquals(25590, McpPortConfig.resolvePort(rawProperty = null, fallbackPort = 25590, onWarning = warnings::add))
+        assertTrue(warnings.isEmpty())
+
+        assertEquals(25581, McpPortConfig.resolvePort(rawProperty = "25581", fallbackPort = 25590, onWarning = warnings::add))
+        assertTrue(warnings.isEmpty())
+
+        assertEquals(25590, McpPortConfig.resolvePort(rawProperty = "70000", fallbackPort = 25590, onWarning = warnings::add))
+        assertEquals(1, warnings.size)
+
+        assertEquals(ArchicaModInfo.DEFAULT_MCP_PORT, McpPortConfig.resolvePort(rawProperty = null, fallbackPort = 0, onWarning = warnings::add))
+    }
+
+    @Test
     fun `parseGetBuildContext handles omitted null and integer radius and defaults includeInventory to false`() {
         assertEquals(BuildContextRequest(12, includeInventory = false), SpatialToolArguments.parseGetBuildContext(null))
         assertEquals(
@@ -294,6 +309,23 @@ class McpServerCoreTest {
                 }
             }
         }
+    }
+
+    @Test
+    fun `server controller updates configured port only when stopped and valid`() {
+        val controller = ArchicaMcpServerController(
+            spatialContext = LocalSpatialContextService(com.archica.mcp.context.FakeWorldContextSource()),
+            blueprintService = com.archica.mcp.blueprint.BlueprintService(
+                catalog = com.archica.mcp.blueprint.FakeBlockCatalog(),
+                litematicaBridge = com.archica.mcp.litematica.FakeLitematicaBridge(
+                    kotlin.io.path.createTempDirectory("archica-controller-test"),
+                ),
+            ),
+            initialPort = 25580,
+        )
+        assertFalse(controller.updateConfiguredPort(70000))
+        assertTrue(controller.updateConfiguredPort(25590))
+        assertEquals(25590, controller.status().port)
     }
 
     private fun assertErrorEnvelope(

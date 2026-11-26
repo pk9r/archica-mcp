@@ -15,6 +15,9 @@ base {
 
 repositories {
     mavenCentral()
+    maven("https://maven.terraformersmc.com/") {
+        name = "TerraformersMC"
+    }
     exclusiveContent {
         forRepository {
             maven("https://api.modrinth.com/maven") {
@@ -49,9 +52,10 @@ dependencies {
     implementation("net.fabricmc.fabric-api:fabric-api:${property("fabric_api_version")}")
     implementation("net.fabricmc:fabric-language-kotlin:${property("fabric_kotlin_version")}")
 
-    // Client-only mod integrations (Litematica & MaLiLib via Modrinth Maven)
+    // Client-only mod integrations (Litematica & MaLiLib via Modrinth Maven; Mod Menu optional compileOnly)
     "clientImplementation"("maven.modrinth:malilib:${property("malilib_version")}")
     "clientImplementation"("maven.modrinth:litematica:${property("litematica_version")}")
+    "clientCompileOnly"("com.terraformersmc:modmenu:${property("modmenu_version")}")
 
     // Embedded MCP Server (Kotlin SDK Server + Ktor CIO)
     implementation("io.modelcontextprotocol:kotlin-sdk-server:$mcpSdkVersion")

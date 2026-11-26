@@ -28,10 +28,18 @@ object ArchicaClientCommands {
         litematicaBridge: LitematicaBridge,
         scope: CoroutineScope,
         inventoryEnabled: AtomicBoolean = AtomicBoolean(false),
+        onOpenConfigScreen: (() -> Unit)? = null,
     ) {
         ClientCommandRegistrationCallback.EVENT.register { dispatcher, _ ->
+            val root = ClientCommands.literal("archica")
+            if (onOpenConfigScreen != null) {
+                root.executes {
+                    onOpenConfigScreen()
+                    1
+                }
+            }
             dispatcher.register(
-                ClientCommands.literal("archica")
+                root
                     .then(
                         ClientCommands.literal("status")
                             .executes { ctx ->
