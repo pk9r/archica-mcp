@@ -3,6 +3,7 @@ package com.archica.mcp.litematica
 import com.archica.mcp.blueprint.BlockSpec
 import com.archica.mcp.blueprint.BlueprintErrorCode
 import com.archica.mcp.blueprint.BlueprintException
+import com.archica.mcp.blueprint.BlueprintPhase
 import com.archica.mcp.blueprint.VoxelGrid
 import com.archica.mcp.context.BlockPos3i
 import com.archica.mcp.context.CardinalDirection
@@ -140,5 +141,69 @@ class LitematicSchematicCompilerTest {
 
         assertEquals(BlockPos3i(50, 80, -20), compiled.worldOrigin)
         assertEquals(BlockPos3i(2, 1, 1), compiled.enclosingSize)
+    }
+
+    @Test
+    fun `phased blueprint compiles multi-region litematic v7 with accurate relative subregion positions`() {
+        val compiler = LitematicSchematicCompiler()
+        val schematicsDir = tempDir.resolve("schematics")
+        val grid = VoxelGrid()
+        // Phase 1 (foundation): (0,0,0) and (2,0,2)
+        grid.set(BlockPos3i(0, 0, 0), BlockSpec("minecraft:cobblestone"), phaseId = "foundation")
+        grid.set(BlockPos3i(2, 0, 2), BlockSpec("minecraft:cobblestone"), phaseId = "foundation")
+        // Phase 2 (frame): (1,1,1) and (1,2,1)
+        grid.set(BlockPos3i(1, 1, 1), BlockSpec("minecraft:oak_log", mapOf("axis" to "y")), phaseId = "frame")
+        grid.set(BlockPos3i(1, 2, 1), BlockSpec("minecraft:oak_log", mapOf("axis" to "y")), phaseId = "frame")
+        // Phase 3 (roof): (0,3,0) to (2,3,2)
+        grid.set(BlockPos3i(0, 3, 0), BlockSpec("minecraft:oak_planks"), phaseId = "roof")
+        grid.set(BlockPos3i(2, 3, 2), BlockSpec("minecraft:oak_planks"), phaseId = "roof")
+
+        val phases = listOf(
+            BlueprintPhase("foundation", 1, "Foundation"),
+            BlueprintPhase("frame", 2, "Frame"),
+            BlueprintPhase("roof", 3, "Roof"),
+        )
+        val compiled = compiler.compileToFile(
+            blueprintId = "phased_villa",
+            sessionOrigin = BlockPos3i(10, 64, 10),
+            facing = CardinalDirection.NORTH,
+            grid = grid,
+            schematicsBaseDir = schematicsDir,
+            phases = phases,
+        )
+
+        assertEquals(6, compiled.totalBlocks)
+        assertEquals(BlockPos3i(3, 4, 3), compiled.enclosingSize)
+
+        val root = NbtBinaryCodec.fromGzipBytes(Files.readAllBytes(compiled.filePath))
+        val metadata = root.getCompound("Metadata")!!
+        assertEquals(3, metadata.getInt("RegionCount"))
+        assertEquals(6, metadata.getInt("TotalBlocks"))
+        assertEquals(36, metadata.getInt("TotalVolume"))
+
+        val regions = root.getCompound("Regions")!!
+        val r1 = regions.getCompound("01_foundation")!!
+        assertEquals(0, r1.getCompound("Position")!!.getInt("x"))
+        assertEquals(0, r1.getCompound("Position")!!.getInt("y"))
+        assertEquals(0, r1.getCompound("Position")!!.getInt("z"))
+        assertEquals(3, r1.getCompound("Size")!!.getInt("x"))
+        assertEquals(1, r1.getCompound("Size")!!.getInt("y"))
+        assertEquals(3, r1.getCompound("Size")!!.getInt("z"))
+
+        val r2 = regions.getCompound("02_frame")!!
+        assertEquals(1, r2.getCompound("Position")!!.getInt("x"))
+        assertEquals(1, r2.getCompound("Position")!!.getInt("y"))
+        assertEquals(1, r2.getCompound("Position")!!.getInt("z"))
+        assertEquals(1, r2.getCompound("Size")!!.getInt("x"))
+        assertEquals(2, r2.getCompound("Size")!!.getInt("y"))
+        assertEquals(1, r2.getCompound("Size")!!.getInt("z"))
+
+        val r3 = regions.getCompound("03_roof")!!
+        assertEquals(0, r3.getCompound("Position")!!.getInt("x"))
+        assertEquals(3, r3.getCompound("Position")!!.getInt("y"))
+        assertEquals(0, r3.getCompound("Position")!!.getInt("z"))
+        assertEquals(3, r3.getCompound("Size")!!.getInt("x"))
+        assertEquals(1, r3.getCompound("Size")!!.getInt("y"))
+        assertEquals(3, r3.getCompound("Size")!!.getInt("z"))
     }
 }

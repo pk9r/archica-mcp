@@ -10,6 +10,9 @@ import com.archica.mcp.blueprint.BlueprintCreateResult
 import com.archica.mcp.blueprint.BlueprintInspectResult
 import com.archica.mcp.blueprint.BlueprintListResult
 import com.archica.mcp.blueprint.BlueprintMutationResult
+import com.archica.mcp.blueprint.BlueprintPhaseInput
+import com.archica.mcp.blueprint.BlueprintPhaseSummary
+import com.archica.mcp.blueprint.PhaseViewState
 import com.archica.mcp.blueprint.PrimitiveOp
 import com.archica.mcp.blueprint.RidgeAxis
 import com.archica.mcp.blueprint.StoredBlueprintOp
@@ -25,9 +28,11 @@ import com.archica.mcp.server.JsonArgumentSupport.requireInt
 import com.archica.mcp.server.JsonArgumentSupport.requireObject
 import com.archica.mcp.server.JsonArgumentSupport.requireString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -35,8 +40,18 @@ import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 
 /** Parsed payloads for blueprint MCP tools. */
-data class BlueprintAddOpsRequest(val blueprintId: String, val ops: List<PrimitiveOp>)
-data class BlueprintUpdateOpRequest(val blueprintId: String, val opId: String, val op: PrimitiveOp)
+data class BlueprintAddOpsRequest(
+    val blueprintId: String,
+    val ops: List<PrimitiveOp>,
+    val batchPhase: BlueprintPhaseInput? = null,
+    val perOpPhases: List<BlueprintPhaseInput?>? = null,
+)
+data class BlueprintUpdateOpRequest(
+    val blueprintId: String,
+    val opId: String,
+    val op: PrimitiveOp,
+    val phase: BlueprintPhaseInput? = null,
+)
 data class BlueprintRemoveOpRequest(val blueprintId: String, val opId: String)
 data class BlueprintUndoRequest(val blueprintId: String, val count: Int)
 data class BlueprintInspectRequest(val blueprintId: String, val includeOps: Boolean)
@@ -71,25 +86,60 @@ object BlueprintToolCodec {
     fun parseAddOps(arguments: JsonObject?): BlueprintAddOpsRequest {
         val args = arguments ?: throw InvalidToolArgumentsException("Missing required arguments: 'blueprint_id' and 'ops'.")
         val blueprintId = args.requireString("blueprint_id")
+        val batchPhase = parsePhaseInput(args["phase"], path = "phase")
         val opsArray = args.requireArray("ops")
         if (opsArray.isEmpty()) {
             throw InvalidToolArgumentsException("Parameter 'ops' must contain at least one operation.")
         }
+        val perOp = ArrayList<BlueprintPhaseInput?>(opsArray.size)
+        var anyOpPhase = false
         val ops = opsArray.mapIndexed { index, element ->
             val obj = element as? JsonObject
                 ?: throw InvalidToolArgumentsException("Element 'ops[$index]' must be a JSON object.")
+            val opPhase = parsePhaseInput(obj["phase"], path = "ops[$index].phase")
+            if (opPhase != null) anyOpPhase = true
+            perOp.add(opPhase)
             parsePrimitiveOp(obj, path = "ops[$index]")
         }
-        return BlueprintAddOpsRequest(blueprintId = blueprintId, ops = ops)
+        return BlueprintAddOpsRequest(
+            blueprintId = blueprintId,
+            ops = ops,
+            batchPhase = batchPhase,
+            perOpPhases = if (anyOpPhase) perOp else null,
+        )
     }
 
     fun parseUpdateOp(arguments: JsonObject?): BlueprintUpdateOpRequest {
         val args = arguments ?: throw InvalidToolArgumentsException("Missing required arguments: 'blueprint_id', 'op_id', and 'op'.")
+        val opObj = args.requireObject("op")
+        val phase = parsePhaseInput(args["phase"], path = "phase")
+            ?: parsePhaseInput(opObj["phase"], path = "op.phase")
         return BlueprintUpdateOpRequest(
             blueprintId = args.requireString("blueprint_id"),
             opId = args.requireString("op_id"),
-            op = parsePrimitiveOp(args.requireObject("op"), path = "op"),
+            op = parsePrimitiveOp(opObj, path = "op"),
+            phase = phase,
         )
+    }
+
+    fun parsePhaseInput(element: JsonElement?, path: String): BlueprintPhaseInput? {
+        if (element == null || element is JsonNull) return null
+        if (element is JsonPrimitive && element.isString) {
+            val title = element.content.trim()
+            if (title.isEmpty()) {
+                throw InvalidToolArgumentsException("Parameter '$path' cannot be blank.")
+            }
+            return BlueprintPhaseInput(title = title)
+        }
+        if (element is JsonObject) {
+            val id = element.optionalString("id")?.trim()?.takeIf { it.isNotEmpty() }
+            val title = element.optionalString("title")?.trim()?.takeIf { it.isNotEmpty() }
+                ?: id
+                ?: throw InvalidToolArgumentsException("Parameter '$path' must include a non-empty 'title' or 'id'.")
+            val description = element.optionalString("description")?.trim()?.takeIf { it.isNotEmpty() }
+            return BlueprintPhaseInput(phaseId = id, title = title, description = description)
+        }
+        throw InvalidToolArgumentsException("Parameter '$path' must be a string title or an object {id?, title, description?}.")
     }
 
     fun parseRemoveOp(arguments: JsonObject?): BlueprintRemoveOpRequest {
@@ -247,6 +297,10 @@ object BlueprintToolCodec {
             put("total_blocks", result.totalBlocks)
             putMaterials(result.materials)
             result.survivalCheck?.let { putSurvivalCheck(it) }
+            if (result.phases.isNotEmpty()) {
+                putPhases(result.phases)
+                result.phaseView?.let { putPhaseView(it) }
+            }
         },
     )
 
@@ -265,6 +319,10 @@ object BlueprintToolCodec {
             put("total_blocks", result.totalBlocks)
             putMaterials(result.materials)
             result.survivalCheck?.let { putSurvivalCheck(it) }
+            if (result.phases.isNotEmpty()) {
+                putPhases(result.phases)
+                result.phaseView?.let { putPhaseView(it) }
+            }
         },
     )
 
@@ -280,6 +338,12 @@ object BlueprintToolCodec {
                             put("facing", item.facing.name)
                             put("op_count", item.opCount)
                             put("has_active_placement", item.hasActivePlacement)
+                            if (item.phaseCount > 0) {
+                                put("phase_count", item.phaseCount)
+                                item.activePhaseId?.let { put("active_phase_id", it) }
+                                item.activePhaseTitle?.let { put("active_phase_title", it) }
+                                item.viewMode?.let { put("view_mode", it.name) }
+                            }
                         },
                     )
                 }
@@ -298,6 +362,11 @@ object BlueprintToolCodec {
             putPos("enclosing_size", result.enclosingSize)
             put("total_blocks", result.totalBlocks)
             result.survivalCheck?.let { putSurvivalCheck(it) }
+            if (result.phaseCount > 0) {
+                put("phase_count", result.phaseCount)
+                result.activePhaseId?.let { put("active_phase_id", it) }
+                result.viewMode?.let { put("view_mode", it.name) }
+            }
         },
     )
 
@@ -312,7 +381,33 @@ object BlueprintToolCodec {
 
     private fun storedOpToJson(stored: StoredBlueprintOp): JsonObject = buildJsonObject {
         put("op_id", stored.opId)
+        stored.phaseId?.let { put("phase_id", it) }
         putPrimitiveFields(stored.op)
+    }
+
+    private fun JsonObjectBuilder.putPhases(phases: List<BlueprintPhaseSummary>) {
+        putJsonArray("phases") {
+            for (phase in phases) {
+                add(
+                    buildJsonObject {
+                        put("phase_id", phase.phaseId)
+                        put("order", phase.order)
+                        put("title", phase.title)
+                        phase.description?.let { put("description", it) }
+                        put("total_blocks", phase.totalBlocks)
+                        putMaterials(phase.materials)
+                        phase.survivalCheck?.let { putSurvivalCheck(it) }
+                    },
+                )
+            }
+        }
+    }
+
+    private fun JsonObjectBuilder.putPhaseView(view: PhaseViewState) {
+        putJsonObject("phase_view") {
+            view.activePhaseId?.let { put("active_phase_id", it) }
+            put("view_mode", view.viewMode.name)
+        }
     }
 
     private fun JsonObjectBuilder.putPrimitiveFields(op: PrimitiveOp) {

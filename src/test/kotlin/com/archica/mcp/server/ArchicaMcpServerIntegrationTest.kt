@@ -1,5 +1,6 @@
 package com.archica.mcp.server
 
+import com.archica.mcp.blueprint.BlueprintDraftStore
 import com.archica.mcp.blueprint.BlueprintService
 import com.archica.mcp.blueprint.FakeBlockCatalog
 import com.archica.mcp.blueprint.SurvivalSnapshotProvider
@@ -126,14 +127,17 @@ class ArchicaMcpServerIntegrationTest {
             )
 
             val addOpsTool = tools.first { it.jsonObject["name"]!!.jsonPrimitive.content == "blueprint_add_ops" }.jsonObject
-            val addOpsItemProps = addOpsTool["inputSchema"]!!.jsonObject["properties"]!!
-                .jsonObject["ops"]!!.jsonObject["items"]!!.jsonObject["properties"]!!.jsonObject
+            val addOpsProps = addOpsTool["inputSchema"]!!.jsonObject["properties"]!!.jsonObject
+            assertTrue(addOpsProps.containsKey("phase"))
+            val addOpsItemProps = addOpsProps["ops"]!!.jsonObject["items"]!!.jsonObject["properties"]!!.jsonObject
             assertTrue(addOpsItemProps.containsKey("ridge_axis"))
             assertTrue(addOpsItemProps.containsKey("step"))
+            assertTrue(addOpsItemProps.containsKey("phase"))
 
             val updateOpTool = tools.first { it.jsonObject["name"]!!.jsonPrimitive.content == "blueprint_update_op" }.jsonObject
-            val updateOpProps = updateOpTool["inputSchema"]!!.jsonObject["properties"]!!
-                .jsonObject["op"]!!.jsonObject["properties"]!!.jsonObject
+            val updateOpTopProps = updateOpTool["inputSchema"]!!.jsonObject["properties"]!!.jsonObject
+            assertTrue(updateOpTopProps.containsKey("phase"))
+            val updateOpProps = updateOpTopProps["op"]!!.jsonObject["properties"]!!.jsonObject
             assertTrue(updateOpProps.containsKey("center"))
             assertTrue(updateOpProps.containsKey("fill_under"))
 
@@ -551,6 +555,153 @@ class ArchicaMcpServerIntegrationTest {
             assertEquals(403, httpClient.send(evilReq, HttpResponse.BodyHandlers.ofString()).statusCode())
         } finally {
             controller.stop()
+        }
+    }
+
+    @Test
+    fun `mcp blueprint drafts persist across simulated server restarts`() = runBlocking {
+        val world = FakeWorldContextSource()
+        val schematicsDir = tempDir.resolve("schematics")
+        val draftsDir = schematicsDir.resolve("archica")
+        val bridge = FakeLitematicaBridge(schematicsDir)
+
+        val firstService = BlueprintService(
+            catalog = FakeBlockCatalog(),
+            litematicaBridge = bridge,
+            draftStore = BlueprintDraftStore(draftsDir),
+        )
+        val firstServer = ArchicaEmbeddedMcpServer(
+            spatialContext = LocalSpatialContextService(world),
+            blueprintService = firstService,
+            port = 0,
+        )
+        assertTrue(firstServer.start())
+        try {
+            val port = requireNotNull(firstServer.resolvedPort())
+            val endpoint = URI.create("http://127.0.0.1:$port/mcp")
+            val sessionId = initializeMcpSession(endpoint)
+
+            callTool(
+                endpoint,
+                sessionId,
+                id = 100,
+                name = "blueprint_create",
+                argsJson = """{"blueprint_id":"persisted_cottage","origin":[10,64,20],"facing":"EAST"}""",
+            )
+            callTool(
+                endpoint,
+                sessionId,
+                id = 101,
+                name = "blueprint_add_ops",
+                argsJson = """{"blueprint_id":"persisted_cottage","ops":[{"type":"fill_box","from":[0,0,0],"to":[2,0,2],"block":"minecraft:oak_planks"},{"type":"set_block","pos":[1,1,0],"block":"minecraft:stone"}]}""",
+            )
+        } finally {
+            firstServer.stop()
+        }
+
+        // Simulate restart with fresh BlueprintService + ArchicaEmbeddedMcpServer
+        val secondService = BlueprintService(
+            catalog = FakeBlockCatalog(),
+            litematicaBridge = bridge,
+            draftStore = BlueprintDraftStore(draftsDir),
+        )
+        assertEquals(1, secondService.loadPersistedDrafts())
+        val secondServer = ArchicaEmbeddedMcpServer(
+            spatialContext = LocalSpatialContextService(world),
+            blueprintService = secondService,
+            port = 0,
+        )
+        assertTrue(secondServer.start())
+        try {
+            val port = requireNotNull(secondServer.resolvedPort())
+            val endpoint = URI.create("http://127.0.0.1:$port/mcp")
+            val sessionId = initializeMcpSession(endpoint)
+
+            val listRes = callTool(endpoint, sessionId, id = 200, name = "blueprint_list", argsJson = "{}")
+            val listJson = json.parseToJsonElement(firstTextContent(listRes)).jsonObject
+            val listed = listJson["blueprints"]!!.jsonArray.single().jsonObject
+            assertEquals("persisted_cottage", listed["blueprint_id"]!!.jsonPrimitive.content)
+            assertEquals(2, listed["op_count"]!!.jsonPrimitive.int)
+
+            val inspectRes = callTool(
+                endpoint,
+                sessionId,
+                id = 201,
+                name = "blueprint_inspect",
+                argsJson = """{"blueprint_id":"persisted_cottage","include_ops":true}""",
+            )
+            val inspectJson = json.parseToJsonElement(firstTextContent(inspectRes)).jsonObject
+            assertEquals(10, inspectJson["total_blocks"]!!.jsonPrimitive.int)
+            assertEquals(2, inspectJson["ops"]!!.jsonArray.size)
+
+            val addMoreRes = callTool(
+                endpoint,
+                sessionId,
+                id = 202,
+                name = "blueprint_add_ops",
+                argsJson = """{"blueprint_id":"persisted_cottage","ops":[{"type":"set_block","pos":[1,2,0],"block":"minecraft:glass"}]}""",
+            )
+            val addMoreJson = json.parseToJsonElement(firstTextContent(addMoreRes)).jsonObject
+            assertEquals(listOf("op_3"), addMoreJson["added_op_ids"]!!.jsonArray.map { it.jsonPrimitive.content })
+
+            val compileRes = callTool(
+                endpoint,
+                sessionId,
+                id = 203,
+                name = "blueprint_compile",
+                argsJson = """{"blueprint_id":"persisted_cottage","activate":true}""",
+            )
+            val compileJson = json.parseToJsonElement(firstTextContent(compileRes)).jsonObject
+            assertTrue(compileJson["activated"]!!.jsonPrimitive.boolean)
+            assertEquals(11, compileJson["total_blocks"]!!.jsonPrimitive.int)
+            assertTrue(Files.exists(schematicsDir.resolve("archica/persisted_cottage.litematic")))
+
+            // Phased build end-to-end over MCP
+            callTool(
+                endpoint,
+                sessionId,
+                id = 204,
+                name = "blueprint_create",
+                argsJson = """{"blueprint_id":"phased_tower","origin":[0,64,0]}""",
+            )
+            callTool(
+                endpoint,
+                sessionId,
+                id = 205,
+                name = "blueprint_add_ops",
+                argsJson = """{"blueprint_id":"phased_tower","phase":{"id":"base","title":"Foundation"},"ops":[{"type":"fill_box","from":[0,0,0],"to":[2,0,2],"block":"minecraft:cobblestone"}]}""",
+            )
+            callTool(
+                endpoint,
+                sessionId,
+                id = 206,
+                name = "blueprint_add_ops",
+                argsJson = """{"blueprint_id":"phased_tower","phase":{"id":"roof","title":"Roof"},"ops":[{"type":"fill_box","from":[0,1,0],"to":[2,1,2],"block":"minecraft:oak_planks"}]}""",
+            )
+            val phasedInspect = callTool(
+                endpoint,
+                sessionId,
+                id = 207,
+                name = "blueprint_inspect",
+                argsJson = """{"blueprint_id":"phased_tower","include_ops":false}""",
+            )
+            val phasedInspectJson = json.parseToJsonElement(firstTextContent(phasedInspect)).jsonObject
+            assertEquals(2, phasedInspectJson["phases"]!!.jsonArray.size)
+            assertEquals("base", phasedInspectJson["phase_view"]!!.jsonObject["active_phase_id"]!!.jsonPrimitive.content)
+
+            val phasedCompile = callTool(
+                endpoint,
+                sessionId,
+                id = 208,
+                name = "blueprint_compile",
+                argsJson = """{"blueprint_id":"phased_tower","activate":true}""",
+            )
+            val phasedCompileJson = json.parseToJsonElement(firstTextContent(phasedCompile)).jsonObject
+            assertEquals(2, phasedCompileJson["phase_count"]!!.jsonPrimitive.int)
+            assertEquals("base", phasedCompileJson["active_phase_id"]!!.jsonPrimitive.content)
+            assertEquals("ISOLATED", phasedCompileJson["view_mode"]!!.jsonPrimitive.content)
+        } finally {
+            secondServer.stop()
         }
     }
 

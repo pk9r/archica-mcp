@@ -29,13 +29,14 @@ Activate the matching companion skill alongside this workflow when applicable:
    - Call `blueprint_create(blueprint_id, origin, facing, overwrite?)`.
    - `blueprint_id` must match `^[a-z0-9_-]{1,48}$` (becomes `<blueprint_id>.litematic`).
    - Use `blueprint_list` to inspect active in-memory sessions and Litematica placements; pass `overwrite=true` to intentionally reset an existing session.
-3. **Draft in layered primitive batches**:
-   - Call `blueprint_add_ops(blueprint_id, ops)` with ordered primitives.
-   - Operations rasterize sequentially (`op_1` -> `op_N`): build **foundation -> structural frame -> walls -> openings (`clear_box`) -> roof -> trim/details**, so later ops cleanly carve or override earlier ones.
-   - Use `blueprint_inspect(blueprint_id, include_ops=true)` to check `op_id`s, local/world `bounding_box`, `total_blocks`, `materials`, and `survival_check` before compiling.
+3. **Draft in layered primitive batches (with semantic build phases)**:
+   - Call `blueprint_add_ops(blueprint_id, ops, phase?)` with ordered primitives.
+   - Operations rasterize sequentially (`op_1` -> `op_N`): build **foundation -> structural frame -> walls -> openings (`clear_box`) -> interior -> roof -> trim/details**, so later ops cleanly carve or override earlier ones.
+   - For multi-part builds, tag batches with `phase` (e.g. `phase: {"id": "foundation", "title": "Foundation & Floor", "description": "Compact stone base"}` or a string title) grouped into **3–6 logical construction phases** so Survival players see what to build first and can toggle between `ISOLATED` (current phase) and `CUMULATIVE` (`1..current`) modes. Final-state phase attribution automatically excludes blocks removed by later `clear_box` ops from earlier phases.
+   - Use `blueprint_inspect(blueprint_id, include_ops=true)` to check `op_id`s, per-phase `phases` breakdowns, local/world `bounding_box`, `total_blocks`, `materials`, and `survival_check` before compiling.
 4. **Compile, preview, and iterate surgically**:
-   - Call `blueprint_compile(blueprint_id, activate=true, origin_override?)` to write `.minecraft/schematics/archica/<blueprint_id>.litematic` and automatically replace any prior `archica:<blueprint_id>` Litematica hologram.
-   - On player feedback, modify only the affected operations via `blueprint_update_op(blueprint_id, op_id, op)`, `blueprint_remove_op(blueprint_id, op_id)`, or `blueprint_undo(blueprint_id, count)`, then re-run `blueprint_compile`.
+   - Call `blueprint_compile(blueprint_id, activate=true, origin_override?)` to write `.minecraft/schematics/archica/<blueprint_id>.litematic` (multi-region when phased, starting at Phase 1 in `ISOLATED` mode) and automatically replace any prior `archica:<blueprint_id>` Litematica hologram.
+   - On player feedback, modify only the affected operations via `blueprint_update_op(blueprint_id, op_id, op, phase?)`, `blueprint_remove_op(blueprint_id, op_id)`, or `blueprint_undo(blueprint_id, count)`, then re-run `blueprint_compile`.
    - Use `blueprint_clear_placement(blueprint_id, delete_file?)` to remove an unwanted hologram placement.
 
 ---

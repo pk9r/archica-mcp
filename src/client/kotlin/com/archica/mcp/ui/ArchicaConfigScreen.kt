@@ -28,6 +28,7 @@ class ArchicaConfigScreen(
     private var stopButton: Button? = null
     private var copyUrlButton: Button? = null
     private var clearAllButton: Button? = null
+    private var phasesButton: Button? = null
 
     private var activePlacementCount: Int? = null
     private var operationInFlight: Boolean = false
@@ -37,7 +38,7 @@ class ArchicaConfigScreen(
     override fun init() {
         val panelWidth = 320
         val leftX = (width - panelWidth) / 2
-        val startY = ((height - 216) / 2).coerceAtLeast(36)
+        val startY = ((height - 240) / 2).coerceAtLeast(32)
 
         val currentPortText = portBox?.value ?: draftConfig.mcpPort.toString()
 
@@ -108,11 +109,19 @@ class ArchicaConfigScreen(
                 },
         )
 
-        // Row 5: Clear All active Archica placements
+        // Row 5: Build Phases & Clear All active Archica placements
         val row5Y = row4Y + 28
+        val halfPanel = (panelWidth - 8) / 2
+        phasesButton = addRenderableWidget(
+            Button.builder(Component.literal("Build Phases...")) {
+                minecraft.gui.setScreen(ArchicaPhaseScreen(this, runtime))
+            }
+                .bounds(leftX, row5Y, halfPanel, 20)
+                .build(),
+        )
         clearAllButton = addRenderableWidget(
-            Button.builder(Component.literal("Clear All Active Holograms")) { onClearAllPlacements() }
-                .bounds(leftX, row5Y, panelWidth, 20)
+            Button.builder(Component.literal("Clear Holograms")) { onClearAllPlacements() }
+                .bounds(leftX + halfPanel + 8, row5Y, halfPanel, 20)
                 .build(),
         )
 
@@ -139,7 +148,7 @@ class ArchicaConfigScreen(
 
         val panelWidth = 320
         val leftX = (width - panelWidth) / 2
-        val startY = ((height - 216) / 2).coerceAtLeast(36)
+        val startY = ((height - 240) / 2).coerceAtLeast(32)
 
         guiGraphics.centeredText(font, title, width / 2, (startY - 20).coerceAtLeast(10), COLOR_WHITE)
 
@@ -334,6 +343,7 @@ class ArchicaConfigScreen(
 
         val worldLoaded = minecraft.level != null && minecraft.player != null
         val hasPlacements = (activePlacementCount ?: 0) > 0
+        phasesButton?.active = !operationInFlight
         clearAllButton?.active = worldLoaded && hasPlacements && !operationInFlight
     }
 

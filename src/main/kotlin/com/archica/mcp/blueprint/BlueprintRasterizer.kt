@@ -73,10 +73,16 @@ class BlueprintRasterizer(
     }
 
     /** Rasterizes [ops] sequentially from index 0 to N into a fresh [VoxelGrid]. */
-    fun rasterize(ops: List<PrimitiveOp>): VoxelGrid {
+    fun rasterize(ops: List<PrimitiveOp>): VoxelGrid =
+        rasterizeStored(ops.mapIndexed { idx, op -> StoredBlueprintOp("op_${idx + 1}", op) })
+
+    /**
+     * Rasterizes stored operations sequentially while maintaining final-state voxel-to-phase attribution.
+     */
+    fun rasterizeStored(ops: List<StoredBlueprintOp>): VoxelGrid {
         val grid = VoxelGrid(maxVolume = maxVolume)
-        for (op in ops) {
-            applyOp(grid, op, depth = 0)
+        for (stored in ops) {
+            applyOp(grid, stored.op, stored.phaseId, depth = 0)
             grid.checkEnclosingVolumeCap()
         }
         autoConnectConnectables(grid)
@@ -100,11 +106,11 @@ class BlueprintRasterizer(
             }
         }
         for ((pos, connected) in updates) {
-            grid.set(pos, connected)
+            grid.replacePreservingPhase(pos, connected)
         }
     }
 
-    private fun applyOp(grid: VoxelGrid, op: PrimitiveOp, depth: Int) {
+    private fun applyOp(grid: VoxelGrid, op: PrimitiveOp, phaseId: String?, depth: Int) {
         if (depth > MAX_REPEAT_DEPTH) {
             throw BlueprintException(
                 BlueprintErrorCode.INVALID_ARGUMENTS,
@@ -112,21 +118,21 @@ class BlueprintRasterizer(
             )
         }
         when (op) {
-            is PrimitiveOp.SetBlock -> applySetBlock(grid, op)
-            is PrimitiveOp.FillBox -> applyFillBox(grid, op)
-            is PrimitiveOp.HollowBox -> applyHollowBox(grid, op)
-            is PrimitiveOp.Line -> applyLine(grid, op)
-            is PrimitiveOp.Cylinder -> applyCylinder(grid, op)
-            is PrimitiveOp.Dome -> applyDome(grid, op)
-            is PrimitiveOp.GableRoof -> applyGableRoof(grid, op)
-            is PrimitiveOp.Staircase -> applyStaircase(grid, op)
-            is PrimitiveOp.ReplaceBox -> applyReplaceBox(grid, op)
+            is PrimitiveOp.SetBlock -> applySetBlock(grid, op, phaseId)
+            is PrimitiveOp.FillBox -> applyFillBox(grid, op, phaseId)
+            is PrimitiveOp.HollowBox -> applyHollowBox(grid, op, phaseId)
+            is PrimitiveOp.Line -> applyLine(grid, op, phaseId)
+            is PrimitiveOp.Cylinder -> applyCylinder(grid, op, phaseId)
+            is PrimitiveOp.Dome -> applyDome(grid, op, phaseId)
+            is PrimitiveOp.GableRoof -> applyGableRoof(grid, op, phaseId)
+            is PrimitiveOp.Staircase -> applyStaircase(grid, op, phaseId)
+            is PrimitiveOp.ReplaceBox -> applyReplaceBox(grid, op, phaseId)
             is PrimitiveOp.ClearBox -> applyClearBox(grid, op)
-            is PrimitiveOp.RepeatPattern -> applyRepeatPattern(grid, op, depth)
+            is PrimitiveOp.RepeatPattern -> applyRepeatPattern(grid, op, phaseId, depth)
         }
     }
 
-    private fun applySetBlock(grid: VoxelGrid, op: PrimitiveOp.SetBlock) {
+    private fun applySetBlock(grid: VoxelGrid, op: PrimitiveOp.SetBlock, phaseId: String?) {
         val resolved = catalog.parseAndResolve(op.block)
         if (resolved.spec.isAir) {
             grid.remove(op.pos)
@@ -134,11 +140,11 @@ class BlueprintRasterizer(
         }
         if (resolved.kind == BlockKind.DOOR && !resolved.spec.properties.containsKey("half")) {
             val inferredFacing = inferDoorFacing(grid, op.pos)
-            grid.set(op.pos, BlockAutoOrienter.orientDoorHalf(resolved, "lower", inferredFacing))
-            grid.set(op.pos.plus(BlockPos3i(0, 1, 0)), BlockAutoOrienter.orientDoorHalf(resolved, "upper", inferredFacing))
+            grid.set(op.pos, BlockAutoOrienter.orientDoorHalf(resolved, "lower", inferredFacing), phaseId)
+            grid.set(op.pos.plus(BlockPos3i(0, 1, 0)), BlockAutoOrienter.orientDoorHalf(resolved, "upper", inferredFacing), phaseId)
             return
         }
-        grid.set(op.pos, resolved.spec)
+        grid.set(op.pos, resolved.spec, phaseId)
     }
 
     private fun inferDoorFacing(grid: VoxelGrid, pos: BlockPos3i): String {
@@ -159,7 +165,7 @@ class BlueprintRasterizer(
         return "south"
     }
 
-    private fun applyFillBox(grid: VoxelGrid, op: PrimitiveOp.FillBox) {
+    private fun applyFillBox(grid: VoxelGrid, op: PrimitiveOp.FillBox, phaseId: String?) {
         val bounds = BlueprintBounds.normalized(op.from, op.to)
         grid.checkBoundsCap(bounds)
         val resolved = catalog.parseAndResolve(op.block)
@@ -172,13 +178,13 @@ class BlueprintRasterizer(
         for (y in bounds.min.y..bounds.max.y) {
             for (z in bounds.min.z..bounds.max.z) {
                 for (x in bounds.min.x..bounds.max.x) {
-                    grid.set(BlockPos3i(x, y, z), oriented)
+                    grid.set(BlockPos3i(x, y, z), oriented, phaseId)
                 }
             }
         }
     }
 
-    private fun applyHollowBox(grid: VoxelGrid, op: PrimitiveOp.HollowBox) {
+    private fun applyHollowBox(grid: VoxelGrid, op: PrimitiveOp.HollowBox, phaseId: String?) {
         val bounds = BlueprintBounds.normalized(op.from, op.to)
         grid.checkBoundsCap(bounds)
         val resolved = catalog.parseAndResolve(op.block)
@@ -188,14 +194,14 @@ class BlueprintRasterizer(
                     val onWall = x == bounds.min.x || x == bounds.max.x || z == bounds.min.z || z == bounds.max.z
                     val onCap = !op.wallsOnly && (y == bounds.min.y || y == bounds.max.y)
                     if (onWall || onCap) {
-                        grid.set(BlockPos3i(x, y, z), resolved.spec)
+                        grid.set(BlockPos3i(x, y, z), resolved.spec, phaseId)
                     }
                 }
             }
         }
     }
 
-    private fun applyLine(grid: VoxelGrid, op: PrimitiveOp.Line) {
+    private fun applyLine(grid: VoxelGrid, op: PrimitiveOp.Line, phaseId: String?) {
         grid.checkBoundsCap(BlueprintBounds.normalized(op.from, op.to))
         val resolved = catalog.parseAndResolve(op.block)
         val dx = op.to.x - op.from.x
@@ -213,7 +219,7 @@ class BlueprintRasterizer(
         val sy = if (dy >= 0) 1 else -1
         val sz = if (dz >= 0) 1 else -1
 
-        grid.set(BlockPos3i(x, y, z), oriented)
+        grid.set(BlockPos3i(x, y, z), oriented, phaseId)
         when {
             adx >= ady && adx >= adz -> {
                 var errY = 2 * ady - adx
@@ -230,7 +236,7 @@ class BlueprintRasterizer(
                     }
                     errY += 2 * ady
                     errZ += 2 * adz
-                    grid.set(BlockPos3i(x, y, z), oriented)
+                    grid.set(BlockPos3i(x, y, z), oriented, phaseId)
                 }
             }
             ady >= adx && ady >= adz -> {
@@ -248,7 +254,7 @@ class BlueprintRasterizer(
                     }
                     errX += 2 * adx
                     errZ += 2 * adz
-                    grid.set(BlockPos3i(x, y, z), oriented)
+                    grid.set(BlockPos3i(x, y, z), oriented, phaseId)
                 }
             }
             else -> {
@@ -266,13 +272,13 @@ class BlueprintRasterizer(
                     }
                     errX += 2 * adx
                     errY += 2 * ady
-                    grid.set(BlockPos3i(x, y, z), oriented)
+                    grid.set(BlockPos3i(x, y, z), oriented, phaseId)
                 }
             }
         }
     }
 
-    private fun applyCylinder(grid: VoxelGrid, op: PrimitiveOp.Cylinder) {
+    private fun applyCylinder(grid: VoxelGrid, op: PrimitiveOp.Cylinder, phaseId: String?) {
         val bounds = validateCylinderParams(op)
         grid.checkBoundsCap(bounds)
         val resolved = catalog.parseAndResolve(op.block)
@@ -292,13 +298,14 @@ class BlueprintRasterizer(
                     grid.set(
                         BlockPos3i(op.center.x + dx, op.center.y + dy, op.center.z + dz),
                         resolved.spec,
+                        phaseId,
                     )
                 }
             }
         }
     }
 
-    private fun applyDome(grid: VoxelGrid, op: PrimitiveOp.Dome) {
+    private fun applyDome(grid: VoxelGrid, op: PrimitiveOp.Dome, phaseId: String?) {
         val bounds = validateDomeParams(op)
         grid.checkBoundsCap(bounds)
         val resolved = catalog.parseAndResolve(op.block)
@@ -320,13 +327,14 @@ class BlueprintRasterizer(
                     grid.set(
                         BlockPos3i(op.center.x + dx, op.center.y + dy, op.center.z + dz),
                         resolved.spec,
+                        phaseId,
                     )
                 }
             }
         }
     }
 
-    private fun applyGableRoof(grid: VoxelGrid, op: PrimitiveOp.GableRoof) {
+    private fun applyGableRoof(grid: VoxelGrid, op: PrimitiveOp.GableRoof, phaseId: String?) {
         val bounds = validateGableRoofParams(op)
         grid.checkBoundsCap(bounds)
         val slopeResolved = catalog.parseAndResolve(op.block)
@@ -343,15 +351,15 @@ class BlueprintRasterizer(
                 val leftStair = BlockAutoOrienter.orientStairs(slopeResolved, towardX = 1, towardZ = 0)
                 val rightStair = BlockAutoOrienter.orientStairs(slopeResolved, towardX = -1, towardZ = 0)
                 for (z in bounds.min.z..bounds.max.z) {
-                    grid.set(BlockPos3i(leftX, y, z), leftStair)
-                    grid.set(BlockPos3i(rightX, y, z), rightStair)
+                    grid.set(BlockPos3i(leftX, y, z), leftStair, phaseId)
+                    grid.set(BlockPos3i(rightX, y, z), rightStair, phaseId)
                 }
             }
             if (span % 2 == 1) {
                 val peakX = bounds.min.x + slopeSteps
                 val peakY = baseY + slopeSteps
                 for (z in bounds.min.z..bounds.max.z) {
-                    grid.set(BlockPos3i(peakX, peakY, z), ridgeSpec)
+                    grid.set(BlockPos3i(peakX, peakY, z), ridgeSpec, phaseId)
                 }
             }
         } else {
@@ -364,21 +372,21 @@ class BlueprintRasterizer(
                 val nearStair = BlockAutoOrienter.orientStairs(slopeResolved, towardX = 0, towardZ = 1)
                 val farStair = BlockAutoOrienter.orientStairs(slopeResolved, towardX = 0, towardZ = -1)
                 for (x in bounds.min.x..bounds.max.x) {
-                    grid.set(BlockPos3i(x, y, nearZ), nearStair)
-                    grid.set(BlockPos3i(x, y, farZ), farStair)
+                    grid.set(BlockPos3i(x, y, nearZ), nearStair, phaseId)
+                    grid.set(BlockPos3i(x, y, farZ), farStair, phaseId)
                 }
             }
             if (span % 2 == 1) {
                 val peakZ = bounds.min.z + slopeSteps
                 val peakY = baseY + slopeSteps
                 for (x in bounds.min.x..bounds.max.x) {
-                    grid.set(BlockPos3i(x, peakY, peakZ), ridgeSpec)
+                    grid.set(BlockPos3i(x, peakY, peakZ), ridgeSpec, phaseId)
                 }
             }
         }
     }
 
-    private fun applyStaircase(grid: VoxelGrid, op: PrimitiveOp.Staircase) {
+    private fun applyStaircase(grid: VoxelGrid, op: PrimitiveOp.Staircase, phaseId: String?) {
         val bounds = validateStaircaseParams(op)
         grid.checkBoundsCap(bounds)
         val resolved = catalog.parseAndResolve(op.block)
@@ -401,17 +409,17 @@ class BlueprintRasterizer(
             for (w in 0 until op.width) {
                 val px = if (primaryX) sx else sx + w
                 val pz = if (primaryX) sz + w else sz
-                grid.set(BlockPos3i(px, sy, pz), stairSpec)
+                grid.set(BlockPos3i(px, sy, pz), stairSpec, phaseId)
                 if (op.fillUnder) {
                     for (fillY in minY until sy) {
-                        grid.set(BlockPos3i(px, fillY, pz), resolved.spec)
+                        grid.set(BlockPos3i(px, fillY, pz), resolved.spec, phaseId)
                     }
                 }
             }
         }
     }
 
-    private fun applyReplaceBox(grid: VoxelGrid, op: PrimitiveOp.ReplaceBox) {
+    private fun applyReplaceBox(grid: VoxelGrid, op: PrimitiveOp.ReplaceBox, phaseId: String?) {
         val bounds = BlueprintBounds.normalized(op.from, op.to)
         grid.checkBoundsCap(bounds)
         val targetSpec = catalog.parseAndResolve(op.target).spec
@@ -427,7 +435,13 @@ class BlueprintRasterizer(
             .map { it.key }
 
         for (pos in matches) {
-            grid.set(pos, replacementSpec)
+            if (replacementSpec.isAir) {
+                grid.remove(pos)
+            } else if (phaseId != null) {
+                grid.set(pos, replacementSpec, phaseId)
+            } else {
+                grid.replacePreservingPhase(pos, replacementSpec)
+            }
         }
     }
 
@@ -445,7 +459,7 @@ class BlueprintRasterizer(
         }
     }
 
-    private fun applyRepeatPattern(grid: VoxelGrid, op: PrimitiveOp.RepeatPattern, depth: Int) {
+    private fun applyRepeatPattern(grid: VoxelGrid, op: PrimitiveOp.RepeatPattern, phaseId: String?, depth: Int) {
         if (op.count !in 1..MAX_REPEAT_COUNT) {
             throw BlueprintException(
                 BlueprintErrorCode.INVALID_ARGUMENTS,
@@ -453,7 +467,7 @@ class BlueprintRasterizer(
             )
         }
         for (i in 0 until op.count) {
-            applyOp(grid, op.op.offset(op.step.times(i)), depth + 1)
+            applyOp(grid, op.op.offset(op.step.times(i)), phaseId, depth + 1)
         }
     }
 

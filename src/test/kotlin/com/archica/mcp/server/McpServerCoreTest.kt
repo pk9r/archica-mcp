@@ -255,6 +255,61 @@ class McpServerCoreTest {
         assertEquals(RidgeAxis.Z, roof.ridgeAxis)
         assertEquals(1, roof.overhang)
         assertTrue(addOps.ops[1] is PrimitiveOp.RepeatPattern)
+
+        val phasedAddOps = BlueprintToolCodec.parseAddOps(
+            buildJsonObject {
+                put("blueprint_id", "oak_cottage")
+                put(
+                    "phase",
+                    buildJsonObject {
+                        put("id", "foundation")
+                        put("title", "Foundation & Floor")
+                        put("description", "Base cobblestone pad")
+                    },
+                )
+                put(
+                    "ops",
+                    buildJsonArray {
+                        add(
+                            buildJsonObject {
+                                put("type", "set_block")
+                                put("pos", buildJsonArray { add(JsonPrimitive(0)); add(JsonPrimitive(0)); add(JsonPrimitive(0)) })
+                                put("block", "minecraft:stone")
+                            },
+                        )
+                        add(
+                            buildJsonObject {
+                                put("type", "set_block")
+                                put("pos", buildJsonArray { add(JsonPrimitive(0)); add(JsonPrimitive(1)); add(JsonPrimitive(0)) })
+                                put("block", "minecraft:oak_log")
+                                put("phase", "Frame")
+                            },
+                        )
+                    },
+                )
+            },
+        )
+        assertEquals("foundation", phasedAddOps.batchPhase?.phaseId)
+        assertEquals("Foundation & Floor", phasedAddOps.batchPhase?.title)
+        assertEquals(null, phasedAddOps.perOpPhases?.get(0))
+        assertEquals("Frame", phasedAddOps.perOpPhases?.get(1)?.title)
+
+        val phasedUpdate = BlueprintToolCodec.parseUpdateOp(
+            buildJsonObject {
+                put("blueprint_id", "oak_cottage")
+                put("op_id", "op_1")
+                put("phase", "Walls")
+                put(
+                    "op",
+                    buildJsonObject {
+                        put("type", "set_block")
+                        put("pos", buildJsonArray { add(JsonPrimitive(0)); add(JsonPrimitive(0)); add(JsonPrimitive(0)) })
+                        put("block", "minecraft:oak_planks")
+                    },
+                )
+            },
+        )
+        assertEquals("Walls", phasedUpdate.phase?.title)
     }
 
     @Test

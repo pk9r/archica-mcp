@@ -1,5 +1,7 @@
 package com.archica.mcp
 
+import com.archica.mcp.blueprint.BlueprintDraftStore
+import com.archica.mcp.blueprint.BlueprintPhaseNavigationResult
 import com.archica.mcp.blueprint.BlueprintService
 import com.archica.mcp.blueprint.ClientBlockCatalog
 import com.archica.mcp.blueprint.PlacementFeedbackEvent
@@ -19,6 +21,7 @@ import com.archica.mcp.server.ArchicaMcpServerController
 import com.archica.mcp.server.McpPortConfig
 import com.archica.mcp.server.SpatialContextService
 import com.archica.mcp.ui.ArchicaConfigScreen
+import com.archica.mcp.ui.ArchicaPhaseScreen
 import com.mojang.blaze3d.platform.InputConstants
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -50,7 +53,17 @@ class ArchicaClientRuntime(
     val litematicaBridge: LitematicaBridge,
     val scope: CoroutineScope,
     val inventoryEnabled: AtomicBoolean,
-)
+    val selectedPhasedBlueprintId: AtomicReference<String?> = AtomicReference(null),
+) {
+    /** Resolves the preferred active phased blueprint (or latest phased draft), updating [selectedPhasedBlueprintId]. */
+    suspend fun resolveTargetPhasedBlueprintId(): String? {
+        val chosen = blueprintService.resolvePhasedBlueprintId(selectedPhasedBlueprintId.get())
+        if (chosen != null) {
+            selectedPhasedBlueprintId.set(chosen)
+        }
+        return chosen
+    }
+}
 
 /** Fabric client entrypoint for Archica MCP. */
 object ArchicaMcpClient : ClientModInitializer {
@@ -94,6 +107,14 @@ object ArchicaMcpClient : ClientModInitializer {
         val schematicCompiler = LitematicSchematicCompiler(
             minecraftDataVersionProvider = { SharedConstants.getCurrentVersion().dataVersion().version() },
         )
+        val draftsDir = runCatching {
+            litematicaBridge.schematicsDirectory().resolve(LitematicSchematicCompiler.ARCHICA_SUBDIR)
+        }.getOrElse {
+            FabricLoader.getInstance().gameDir
+                .resolve("schematics")
+                .resolve(LitematicSchematicCompiler.ARCHICA_SUBDIR)
+        }
+        val draftStore = BlueprintDraftStore(draftsDir)
         val blueprintService = BlueprintService(
             catalog = ClientBlockCatalog(),
             survivalProvider = SurvivalSnapshotProvider {
@@ -101,8 +122,18 @@ object ArchicaMcpClient : ClientModInitializer {
             },
             litematicaBridge = litematicaBridge,
             compiler = schematicCompiler,
+            draftStore = draftStore,
             placementFeedbackListener = { event -> notifyPlacementFeedback(event) },
         )
+        val restoredDraftCount = blueprintService.loadPersistedDrafts()
+        if (restoredDraftCount > 0) {
+            logger.info(
+                "{} restored {} persisted blueprint draft(s) from {}",
+                ArchicaModInfo.MOD_NAME,
+                restoredDraftCount,
+                draftsDir,
+            )
+        }
 
         val controller = ArchicaMcpServerController(
             spatialContext = spatialService,
@@ -138,6 +169,7 @@ object ArchicaMcpClient : ClientModInitializer {
             litematicaBridge = litematicaBridge,
             scope = scope,
             inventoryEnabled = inventoryEnabled,
+            selectedPhasedBlueprintId = runtime.selectedPhasedBlueprintId,
             onOpenConfigScreen = { requestOpenConfigScreen() },
         )
 
@@ -185,6 +217,30 @@ object ArchicaMcpClient : ClientModInitializer {
                 category,
             ),
         )
+        val nextPhaseKey = KeyMappingHelper.registerKeyMapping(
+            KeyMapping(
+                "key.archica-mcp.phase_next",
+                InputConstants.Type.KEYBOARD,
+                InputConstants.UNKNOWN.value,
+                category,
+            ),
+        )
+        val prevPhaseKey = KeyMappingHelper.registerKeyMapping(
+            KeyMapping(
+                "key.archica-mcp.phase_prev",
+                InputConstants.Type.KEYBOARD,
+                InputConstants.UNKNOWN.value,
+                category,
+            ),
+        )
+        val togglePhaseModeKey = KeyMappingHelper.registerKeyMapping(
+            KeyMapping(
+                "key.archica-mcp.phase_toggle_mode",
+                InputConstants.Type.KEYBOARD,
+                InputConstants.UNKNOWN.value,
+                category,
+            ),
+        )
         openConfigKeyMapping = keyMapping
 
         ClientTickEvents.END_CLIENT_TICK.register { client ->
@@ -198,10 +254,60 @@ object ArchicaMcpClient : ClientModInitializer {
                     client.gui.setScreen(ArchicaConfigScreen(null, runtime))
                 }
             }
+            while (nextPhaseKey.consumeClick()) {
+                if (client.gui.screen() == null) {
+                    triggerPhaseKeyAction(client, runtime) { id -> runtime.blueprintService.stepPhase(id, 1) }
+                }
+            }
+            while (prevPhaseKey.consumeClick()) {
+                if (client.gui.screen() == null) {
+                    triggerPhaseKeyAction(client, runtime) { id -> runtime.blueprintService.stepPhase(id, -1) }
+                }
+            }
+            while (togglePhaseModeKey.consumeClick()) {
+                if (client.gui.screen() == null) {
+                    triggerPhaseKeyAction(client, runtime) { id -> runtime.blueprintService.togglePhaseViewMode(id) }
+                }
+            }
+        }
+    }
+
+    private fun triggerPhaseKeyAction(
+        client: Minecraft,
+        runtime: ArchicaClientRuntime,
+        action: suspend (String) -> BlueprintPhaseNavigationResult,
+    ) {
+        runtime.scope.launch {
+            val targetId = runtime.resolveTargetPhasedBlueprintId()
+            if (targetId == null) {
+                client.execute {
+                    client.player?.sendOverlayMessage(
+                        Component.literal("[Archica] No phased blueprints available.").withStyle(ChatFormatting.YELLOW),
+                    )
+                }
+                return@launch
+            }
+            runCatching { action(targetId) }
+                .onSuccess { nav ->
+                    client.execute {
+                        client.player?.sendOverlayMessage(ArchicaPhaseScreen.formatActionBar(nav))
+                    }
+                }
+                .onFailure { err ->
+                    client.execute {
+                        client.player?.sendOverlayMessage(
+                            Component.literal("[Archica] ${err.message ?: err::class.simpleName}")
+                                .withStyle(ChatFormatting.RED),
+                        )
+                    }
+                }
         }
     }
 
     private fun notifyPlacementFeedback(event: PlacementFeedbackEvent) {
+        if (event is PlacementFeedbackEvent.Activated) {
+            clientRuntime?.selectedPhasedBlueprintId?.set(event.blueprintId)
+        }
         if (clientRuntime?.configRef?.get()?.showPlacementFeedback == false) return
         val text = when (event) {
             is PlacementFeedbackEvent.Activated -> {

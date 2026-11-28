@@ -245,4 +245,70 @@ class BlueprintRasterizerTest {
         assertEquals("true", explicitFence["south"])
         assertEquals("true", explicitFence["west"])
     }
+
+    @Test
+    fun `final-state phase attribution handles clear_box, replace_box, doors, repeat_pattern, and connectables`() {
+        val grid = rasterizer.rasterizeStored(
+            listOf(
+                StoredBlueprintOp(
+                    opId = "op_1",
+                    op = PrimitiveOp.HollowBox(BlockPos3i(0, 0, 0), BlockPos3i(4, 3, 4), "minecraft:oak_planks"),
+                    phaseId = "walls",
+                ),
+                StoredBlueprintOp(
+                    opId = "op_2",
+                    op = PrimitiveOp.ClearBox(BlockPos3i(2, 1, 0), BlockPos3i(2, 2, 0)),
+                    phaseId = "openings",
+                ),
+                StoredBlueprintOp(
+                    opId = "op_3",
+                    op = PrimitiveOp.SetBlock(BlockPos3i(2, 1, 0), "minecraft:oak_door"),
+                    phaseId = "trim",
+                ),
+                StoredBlueprintOp(
+                    opId = "op_4",
+                    op = PrimitiveOp.SetBlock(BlockPos3i(1, 1, 0), "minecraft:glass_pane"),
+                    phaseId = "windows",
+                ),
+                StoredBlueprintOp(
+                    opId = "op_5",
+                    op = PrimitiveOp.ReplaceBox(
+                        from = BlockPos3i(0, 0, 0),
+                        to = BlockPos3i(4, 0, 0),
+                        target = "minecraft:oak_planks",
+                        replacement = "minecraft:cobblestone",
+                    ),
+                    phaseId = "foundation",
+                ),
+                StoredBlueprintOp(
+                    opId = "op_6",
+                    op = PrimitiveOp.RepeatPattern(
+                        op = PrimitiveOp.SetBlock(BlockPos3i(0, 4, 0), "minecraft:oak_fence"),
+                        count = 2,
+                        step = BlockPos3i(4, 0, 0),
+                    ),
+                    phaseId = "trim",
+                ),
+            ),
+        )
+
+        // Door halves share phase "trim" and count as 1 door item
+        assertEquals("trim", grid.phaseOf(BlockPos3i(2, 1, 0)))
+        assertEquals("trim", grid.phaseOf(BlockPos3i(2, 2, 0)))
+        assertEquals(1, grid.materialCountsForPhase("trim")["minecraft:oak_door"])
+        assertEquals(2, grid.materialCountsForPhase("trim")["minecraft:oak_fence"])
+
+        // Glass pane keeps phase "windows" AND auto-connects to adjacent planks/door
+        assertEquals("windows", grid.phaseOf(BlockPos3i(1, 1, 0)))
+        assertEquals("true", grid.get(BlockPos3i(1, 1, 0))?.properties?.get("east"))
+        assertEquals("true", grid.get(BlockPos3i(1, 1, 0))?.properties?.get("west"))
+
+        // ReplaceBox re-attributed floor front row to "foundation"
+        assertEquals("foundation", grid.phaseOf(BlockPos3i(0, 0, 0)))
+        assertEquals(5, grid.blockCountForPhase("foundation"))
+
+        // Openings carved doorway and placed no surviving blocks -> 0 blocks in "openings"
+        assertEquals(0, grid.blockCountForPhase("openings"))
+        assertNull(grid.phaseOf(BlockPos3i(2, 1, 1)))
+    }
 }

@@ -8,6 +8,8 @@ import fi.dy.masa.litematica.data.DataManager
 import fi.dy.masa.litematica.data.SchematicHolder
 import fi.dy.masa.litematica.schematic.LitematicaSchematic
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacement
+import fi.dy.masa.malilib.gui.Message
+import fi.dy.masa.malilib.gui.interfaces.IMessageConsumer
 import net.minecraft.core.BlockPos
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
@@ -33,6 +35,7 @@ class ClientLitematicaBridge(
         blueprintId: String,
         schematicFile: Path,
         worldOrigin: BlockPos3i,
+        visibleRegions: Set<String>?,
     ): Boolean = dispatcher.runOnClientThread {
         try {
             val placementManager = DataManager.getSchematicPlacementManager()
@@ -64,6 +67,10 @@ class ClientLitematicaBridge(
                 true,
             )
             placementManager.addSchematicPlacement(placement, false)
+            if (!visibleRegions.isNullOrEmpty()) {
+                applySubRegionVisibility(placement, visibleRegions)
+                placementManager.markChunksForRebuild(placement)
+            }
             activePlacementIds.add(blueprintId)
             existingPlacements.isNotEmpty()
         } catch (e: LitematicaUnavailableException) {
@@ -74,6 +81,59 @@ class ClientLitematicaBridge(
                 cause = t,
             )
         }
+    }
+
+    override suspend fun setSubRegionVisibility(
+        blueprintId: String,
+        visibleRegions: Set<String>,
+    ): Boolean {
+        if (!dispatcher.isWorldLoaded()) return false
+        return try {
+            dispatcher.runOnClientThread {
+                val placementManager = DataManager.getSchematicPlacementManager()
+                val targetName = placementName(blueprintId)
+                val matching = placementManager.getAllSchematicsPlacements()
+                    .filter { it.name == targetName }
+                if (matching.isEmpty()) {
+                    return@runOnClientThread false
+                }
+                for (placement in matching) {
+                    applySubRegionVisibility(placement, visibleRegions)
+                    placementManager.markChunksForRebuild(placement)
+                }
+                true
+            }
+        } catch (e: ContextCompressionException) {
+            if (e.code == ContextErrorCode.NO_WORLD_LOADED) false else throw e
+        } catch (e: LitematicaUnavailableException) {
+            throw e
+        } catch (t: Throwable) {
+            throw LitematicaUnavailableException(
+                "Litematica failed to update phase visibility for '$blueprintId': ${t.message ?: t::class.simpleName}",
+                cause = t,
+            )
+        }
+    }
+
+    private fun applySubRegionVisibility(
+        placement: SchematicPlacement,
+        visibleRegions: Set<String>,
+    ) {
+        val allSubRegions = placement.allSubRegionsPlacements
+        if (allSubRegions.isEmpty()) return
+        val toDisable = allSubRegions.filter { it.name !in visibleRegions }
+        val toEnable = allSubRegions.filter { it.name in visibleRegions }
+        if (toDisable.isNotEmpty()) {
+            placement.setSubRegionsEnabledState(false, toDisable, NoOpMessageConsumer)
+        }
+        if (toEnable.isNotEmpty()) {
+            placement.setSubRegionsEnabledState(true, toEnable, NoOpMessageConsumer)
+        }
+    }
+
+    private object NoOpMessageConsumer : IMessageConsumer {
+        override fun addMessage(type: Message.MessageType, messageKey: String, vararg args: Any) {}
+        override fun addMessage(type: Message.MessageType, displayTimeMs: Int, messageKey: String, vararg args: Any) {}
     }
 
     override suspend fun clearPlacement(blueprintId: String): Boolean = dispatcher.runOnClientThread {

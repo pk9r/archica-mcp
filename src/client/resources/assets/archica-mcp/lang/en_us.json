@@ -1,4 +1,7 @@
 {
   "key.category.archica-mcp.general": "Archica MCP",
-  "key.archica-mcp.open_config": "Open Archica Config"
+  "key.archica-mcp.open_config": "Open Archica Config",
+  "key.archica-mcp.phase_next": "Next Build Phase",
+  "key.archica-mcp.phase_prev": "Previous Build Phase",
+  "key.archica-mcp.phase_toggle_mode": "Toggle Phase View Mode"
 }

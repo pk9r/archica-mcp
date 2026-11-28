@@ -59,8 +59,8 @@ object ArchicaMcpServerFactory {
         Recommended workflow:
         1. Call get_build_context (optional radius 4..24) to read player pose, suggested_origin, and 2D surface terrain grid (inventory materials and survival_check are omitted by default unless enabled by the player via /archica inventory on). Use scan_volume for bounded 3D RLE slices of existing structures.
         2. Call blueprint_create(blueprint_id, origin, facing) to start a draft session anchored at origin.
-        3. Use blueprint_add_ops, blueprint_update_op, blueprint_remove_op, and blueprint_undo to refine operations in anchor-relative local coordinates (+Y up, +Z forward, +X right; inclusive box bounds).
-        4. Call blueprint_compile(blueprint_id, activate=true) to write a .litematic schematic and activate/replace the in-world Litematica hologram.
+        3. Use blueprint_add_ops, blueprint_update_op, blueprint_remove_op, and blueprint_undo to refine operations in anchor-relative local coordinates (+Y up, +Z forward, +X right; inclusive box bounds). For multi-part builds, group ops into 3-6 ordered semantic build phases via the optional 'phase' parameter (e.g. Foundation, Frame, Walls, Interior, Roof) so players can build step-by-step and toggle Isolated/Cumulative display modes.
+        4. Call blueprint_compile(blueprint_id, activate=true) to write a .litematic schematic (multi-region when phased) and activate/replace the in-world Litematica hologram.
     """.trimIndent()
 
     private val getBuildContextSchema = ToolSchema(
@@ -115,6 +115,7 @@ object ArchicaMcpServerFactory {
     private val blueprintAddOpsSchema = ToolSchema(
         properties = buildJsonObject {
             putBlueprintIdProperty()
+            putPhaseProperty("Optional semantic build phase applied to all ops in this batch (string title or object {id?: string, title: string, description?: string}).")
             putJsonObject("ops") {
                 put("type", "array")
                 put("minItems", 1)
@@ -134,6 +135,7 @@ object ArchicaMcpServerFactory {
                 put("type", "string")
                 put("description", "Target operation ID (for example 'op_2') to replace in place.")
             }
+            putPhaseProperty("Optional replacement semantic phase (preserves the operation's existing phase when omitted).")
             putJsonObject("op") {
                 putPrimitiveOpObjectSchema("Replacement building primitive operation. $PRIMITIVE_OP_GUIDE")
             }
@@ -269,25 +271,29 @@ object ArchicaMcpServerFactory {
 
         server.addTool(
             name = "blueprint_add_ops",
-            description = "Appends composable building primitives to a draft blueprint and returns op_ids, bounds, and material summary.",
+            description = "Appends composable building primitives (with optional semantic build phase) to a draft blueprint and returns op_ids, bounds, and material summary.",
             inputSchema = blueprintAddOpsSchema,
             toolAnnotations = draftMutationAnnotations,
         ) { request ->
             McpToolExecutor.execute {
                 val parsed = BlueprintToolCodec.parseAddOps(request.arguments)
-                BlueprintToolCodec.formatMutation(blueprintService.addOps(parsed.blueprintId, parsed.ops))
+                BlueprintToolCodec.formatMutation(
+                    blueprintService.addOps(parsed.blueprintId, parsed.ops, parsed.batchPhase, parsed.perOpPhases),
+                )
             }
         }
 
         server.addTool(
             name = "blueprint_update_op",
-            description = "Replaces an existing primitive operation in place by op_id while preserving evaluation order.",
+            description = "Replaces an existing primitive operation in place by op_id while preserving evaluation order and optional phase assignment.",
             inputSchema = blueprintUpdateOpSchema,
             toolAnnotations = draftMutationAnnotations,
         ) { request ->
             McpToolExecutor.execute {
                 val parsed = BlueprintToolCodec.parseUpdateOp(request.arguments)
-                BlueprintToolCodec.formatMutation(blueprintService.updateOp(parsed.blueprintId, parsed.opId, parsed.op))
+                BlueprintToolCodec.formatMutation(
+                    blueprintService.updateOp(parsed.blueprintId, parsed.opId, parsed.op, parsed.phase),
+                )
             }
         }
 
@@ -449,8 +455,15 @@ object ArchicaMcpServerFactory {
                 put("description", "Repetition count (1..256) for repeat_pattern.")
             }
             putInt3Array("step", "Local [dx, dy, dz] offset applied per iteration in repeat_pattern.")
+            putPhaseProperty("Optional per-operation semantic build phase override (string title or object {id?, title, description?}).")
         }
         put("additionalProperties", true)
+    }
+
+    private fun kotlinx.serialization.json.JsonObjectBuilder.putPhaseProperty(description: String) {
+        putJsonObject("phase") {
+            put("description", description)
+        }
     }
 
     private fun kotlinx.serialization.json.JsonObjectBuilder.putBlueprintIdProperty() {

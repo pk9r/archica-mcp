@@ -18,13 +18,24 @@ interface LitematicaBridge {
 
     /**
      * Loads [schematicFile] and activates an `"archica:<blueprintId>"` placement at [worldOrigin],
-     * replacing any existing placement for [blueprintId]. Returns `true` if a prior placement was replaced.
+     * replacing any existing placement for [blueprintId]. When [visibleRegions] is non-null and non-empty,
+     * only matching subregions are enabled on activation. Returns `true` if a prior placement was replaced.
      */
     suspend fun activatePlacement(
         blueprintId: String,
         schematicFile: Path,
         worldOrigin: BlockPos3i,
+        visibleRegions: Set<String>? = null,
     ): Boolean
+
+    /**
+     * Updates subregion visibility on an active `"archica:<blueprintId>"` placement in place without
+     * rewriting the `.litematic` file. Returns `true` if a matching active placement was updated.
+     */
+    suspend fun setSubRegionVisibility(
+        blueprintId: String,
+        visibleRegions: Set<String>,
+    ): Boolean = false
 
     /** Removes any active placement for [blueprintId]; returns `true` if at least one placement was removed. */
     suspend fun clearPlacement(blueprintId: String): Boolean

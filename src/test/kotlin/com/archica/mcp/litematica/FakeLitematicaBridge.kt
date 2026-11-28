@@ -13,6 +13,7 @@ class FakeLitematicaBridge(
         val blueprintId: String,
         val schematicFile: Path,
         val worldOrigin: BlockPos3i,
+        var visibleRegions: Set<String>? = null,
     )
 
     var worldLoaded: Boolean = true
@@ -20,6 +21,7 @@ class FakeLitematicaBridge(
     val activePlacements = LinkedHashMap<String, PlacementRecord>()
     val evictedFiles = mutableListOf<Path>()
     var activateCalls: Int = 0
+    var visibilityCalls: Int = 0
     var clearCalls: Int = 0
     var listCalls: Int = 0
 
@@ -29,6 +31,7 @@ class FakeLitematicaBridge(
         blueprintId: String,
         schematicFile: Path,
         worldOrigin: BlockPos3i,
+        visibleRegions: Set<String>?,
     ): Boolean {
         activateCalls++
         if (!worldLoaded) {
@@ -41,8 +44,22 @@ class FakeLitematicaBridge(
             throw LitematicaUnavailableException(msg)
         }
         val replaced = activePlacements.containsKey(blueprintId)
-        activePlacements[blueprintId] = PlacementRecord(blueprintId, schematicFile, worldOrigin)
+        activePlacements[blueprintId] = PlacementRecord(blueprintId, schematicFile, worldOrigin, visibleRegions)
         return replaced
+    }
+
+    override suspend fun setSubRegionVisibility(
+        blueprintId: String,
+        visibleRegions: Set<String>,
+    ): Boolean {
+        visibilityCalls++
+        if (!worldLoaded) return false
+        adapterFailureMessage?.let { msg ->
+            throw LitematicaUnavailableException(msg)
+        }
+        val existing = activePlacements[blueprintId] ?: return false
+        existing.visibleRegions = visibleRegions
+        return true
     }
 
     override suspend fun clearPlacement(blueprintId: String): Boolean {

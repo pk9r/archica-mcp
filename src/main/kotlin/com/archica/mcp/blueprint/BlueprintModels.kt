@@ -292,10 +292,98 @@ sealed interface PrimitiveOp {
     }
 }
 
-/** Operation stored inside a blueprint session with its stable monotonic [opId]. */
+/** Display filter mode for phased builds inside Litematica. */
+enum class PhaseViewMode {
+    ISOLATED,
+    CUMULATIVE,
+    ALL,
+    ;
+
+    fun nextToggle(): PhaseViewMode = when (this) {
+        ISOLATED -> CUMULATIVE
+        CUMULATIVE -> ISOLATED
+        ALL -> ISOLATED
+    }
+
+    companion object {
+        fun parse(raw: String): PhaseViewMode = when (raw.trim().uppercase()) {
+            "ISOLATED" -> ISOLATED
+            "CUMULATIVE" -> CUMULATIVE
+            "ALL" -> ALL
+            else -> throw BlueprintException(
+                BlueprintErrorCode.INVALID_ARGUMENTS,
+                "Invalid view_mode '$raw': expected ISOLATED, CUMULATIVE, or ALL.",
+            )
+        }
+    }
+}
+
+/** Input metadata supplied when creating or assigning a semantic build phase. */
+data class BlueprintPhaseInput(
+    val phaseId: String? = null,
+    val title: String,
+    val description: String? = null,
+)
+
+/** Ordered semantic build phase registered on a blueprint session. */
+data class BlueprintPhase(
+    val phaseId: String,
+    val order: Int,
+    val title: String,
+    val description: String? = null,
+) {
+    companion object {
+        private val PHASE_ID_REGEX = Regex("^[a-z0-9_-]{1,32}$")
+
+        fun isValidPhaseId(phaseId: String): Boolean = PHASE_ID_REGEX.matches(phaseId)
+
+        fun requireValidPhaseId(phaseId: String) {
+            if (!isValidPhaseId(phaseId)) {
+                throw BlueprintException(
+                    BlueprintErrorCode.INVALID_ARGUMENTS,
+                    "Invalid phase_id '$phaseId': must match ^[a-z0-9_-]{1,32}$.",
+                )
+            }
+        }
+
+        /** Generates a deterministic slug matching `^[a-z0-9_-]{1,32}$` from [title]. */
+        fun slugify(title: String): String {
+            val cleaned = title.trim()
+                .lowercase()
+                .replace(Regex("[^a-z0-9_-]+"), "_")
+                .trim('_', '-')
+            val base = if (cleaned.isEmpty()) "phase" else cleaned
+            return base.take(32).trimEnd('_', '-').ifEmpty { "phase" }
+        }
+
+        /** Deterministic `.litematic` subregion name preserving phase execution order. */
+        fun regionName(order: Int, phaseId: String): String =
+            "${order.toString().padStart(2, '0')}_$phaseId"
+    }
+}
+
+/** Active phase navigation cursor and view mode for a phased blueprint. */
+data class PhaseViewState(
+    val activePhaseId: String? = null,
+    val viewMode: PhaseViewMode = PhaseViewMode.ISOLATED,
+)
+
+/** Per-phase geometry and material summary returned on inspect/mutation responses. */
+data class BlueprintPhaseSummary(
+    val phaseId: String,
+    val order: Int,
+    val title: String,
+    val description: String? = null,
+    val totalBlocks: Int,
+    val materials: Map<String, Int>,
+    val survivalCheck: SurvivalMaterialCheck? = null,
+)
+
+/** Operation stored inside a blueprint session with its stable monotonic [opId] and optional [phaseId]. */
 data class StoredBlueprintOp(
     val opId: String,
     val op: PrimitiveOp,
+    val phaseId: String? = null,
 )
 
 internal fun BlockPos3i.plus(delta: BlockPos3i): BlockPos3i =

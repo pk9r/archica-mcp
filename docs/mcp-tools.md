@@ -95,7 +95,7 @@ Initializes a stateful blueprint session anchored at `origin`.
 ---
 
 ### `blueprint_add_ops`
-Appends one or more primitive operations (see [Stateful Blueprints & Building Primitives](blueprint-primitives.md)).
+Appends one or more primitive operations (see [Stateful Blueprints & Building Primitives](blueprint-primitives.md)), optionally tagged with semantic `phase` metadata (`string` title or `{ "id"?: string, "title": string, "description"?: string }`) at the batch or individual-operation level.
 
 **Input Schema:**
 ```json
@@ -104,6 +104,7 @@ Appends one or more primitive operations (see [Stateful Blueprints & Building Pr
   "required": ["blueprint_id", "ops"],
   "properties": {
     "blueprint_id": { "type": "string" },
+    "phase": { "description": "Optional semantic build phase (title string or {id?, title, description?})." },
     "ops": {
       "type": "array",
       "minItems": 1,
@@ -118,7 +119,8 @@ Appends one or more primitive operations (see [Stateful Blueprints & Building Pr
               "cylinder", "dome", "gable_roof", "staircase",
               "replace_box", "clear_box", "repeat_pattern"
             ]
-          }
+          },
+          "phase": { "description": "Optional per-op semantic phase override." }
         },
         "additionalProperties": true
       }
@@ -154,7 +156,7 @@ Appends one or more primitive operations (see [Stateful Blueprints & Building Pr
 ---
 
 ### `blueprint_update_op`
-Replaces an existing operation in place while preserving its order in the evaluation pipeline.
+Replaces an existing operation in place while preserving its order in the evaluation pipeline (and retaining its existing `phase` unless `phase` is explicitly provided).
 
 **Input Schema:**
 ```json
@@ -164,6 +166,7 @@ Replaces an existing operation in place while preserving its order in the evalua
   "properties": {
     "blueprint_id": { "type": "string" },
     "op_id": { "type": "string" },
+    "phase": { "description": "Optional replacement semantic phase." },
     "op": { "type": "object", "required": ["type"], "additionalProperties": true }
   }
 }

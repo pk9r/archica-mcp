@@ -5,6 +5,10 @@ import com.archica.mcp.context.CardinalDirection
 import com.archica.mcp.context.FakeWorldContextSource
 import com.archica.mcp.context.InventoryEntry
 import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.io.TempDir
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -140,5 +144,122 @@ class BlueprintSessionStoreTest {
         )
         assertNull(disabledAdd.survivalCheck)
         assertNull(disabledService.inspect("cabin_no_inv").survivalCheck)
+    }
+
+    @Test
+    fun `persists across store reload, clamps nextOpNumber, and skips drafts with unknown blocks`(
+        @TempDir tempDir: Path,
+    ) {
+        val draftsDir = tempDir.resolve("schematics/archica")
+        val draftStore = BlueprintDraftStore(draftsDir)
+        val firstStore = BlueprintSessionStore(catalog = catalog, draftStore = draftStore)
+
+        firstStore.create(BlueprintCreateRequest("bridge", BlockPos3i(20, 64, 30), CardinalDirection.SOUTH))
+        firstStore.addOps(
+            "bridge",
+            listOf(
+                PrimitiveOp.SetBlock(BlockPos3i(0, 0, 0), "minecraft:stone"),
+                PrimitiveOp.SetBlock(BlockPos3i(1, 0, 0), "minecraft:oak_planks"),
+            ),
+        )
+        firstStore.removeOp("bridge", "op_1")
+
+        // Write a second draft with an unknown block ID and stale nextOpNumber on a valid third draft
+        Files.writeString(
+            draftsDir.resolve("bad_block.draft.json"),
+            """
+            {
+              "schemaVersion": 1,
+              "blueprintId": "bad_block",
+              "origin": {"x": 0, "y": 64, "z": 0},
+              "facing": "NORTH",
+              "nextOpNumber": 2,
+              "ops": [{"opId": "op_1", "op": {"type": "set_block", "pos": {"x": 0, "y": 0, "z": 0}, "block": "minecraft:does_not_exist"}}]
+            }
+            """.trimIndent(),
+            StandardCharsets.UTF_8,
+        )
+        Files.writeString(
+            draftsDir.resolve("clamped.draft.json"),
+            """
+            {
+              "schemaVersion": 1,
+              "blueprintId": "clamped",
+              "origin": {"x": 5, "y": 64, "z": 5},
+              "facing": "NORTH",
+              "nextOpNumber": 1,
+              "ops": [{"opId": "op_4", "op": {"type": "set_block", "pos": {"x": 0, "y": 0, "z": 0}, "block": "minecraft:stone"}}]
+            }
+            """.trimIndent(),
+            StandardCharsets.UTF_8,
+        )
+
+        val reloadedStore = BlueprintSessionStore(catalog = catalog, draftStore = draftStore)
+        val loadedCount = reloadedStore.loadPersistedDrafts()
+        assertEquals(2, loadedCount)
+        assertEquals(listOf("bridge", "clamped"), reloadedStore.sessionIds())
+
+        val nextBridge = reloadedStore.addOps("bridge", listOf(PrimitiveOp.SetBlock(BlockPos3i(2, 0, 0), "minecraft:glass")))
+        assertEquals(listOf("op_3"), nextBridge.addedOpIds)
+        assertEquals(listOf("op_2", "op_3"), nextBridge.ops.map { it.opId })
+
+        val nextClamped = reloadedStore.addOps("clamped", listOf(PrimitiveOp.SetBlock(BlockPos3i(1, 0, 0), "minecraft:glass")))
+        assertEquals(listOf("op_5"), nextClamped.addedOpIds)
+    }
+
+    @Test
+    fun `semantic phases order deterministically, prune empty phases, preserve cursor, and compute per-phase survival`(
+        @TempDir tempDir: Path,
+    ) = runBlocking {
+        val world = FakeWorldContextSource(
+            inventory = listOf(InventoryEntry("minecraft:cobblestone", 12)),
+        )
+        val draftStore = BlueprintDraftStore(tempDir.resolve("drafts"))
+        val service = BlueprintService(
+            catalog = catalog,
+            survivalProvider = SurvivalSnapshotProvider.fromWorldSource(world),
+            draftStore = draftStore,
+        )
+        service.create(BlueprintCreateRequest("cottage", BlockPos3i(0, 64, 0)))
+
+        service.addOps(
+            "cottage",
+            listOf(PrimitiveOp.FillBox(BlockPos3i(0, 0, 0), BlockPos3i(2, 0, 2), "minecraft:cobblestone")),
+            batchPhase = BlueprintPhaseInput(title = "Foundation & Floor", description = "Stone base"),
+        )
+        service.addOps(
+            "cottage",
+            listOf(PrimitiveOp.SetBlock(BlockPos3i(1, 1, 1), "minecraft:stone")),
+            batchPhase = BlueprintPhaseInput(phaseId = "scaffold", title = "Temporary Scaffold"),
+        )
+        service.addOps(
+            "cottage",
+            listOf(
+                PrimitiveOp.ClearBox(BlockPos3i(1, 1, 1), BlockPos3i(1, 1, 1)),
+                PrimitiveOp.FillBox(BlockPos3i(0, 1, 0), BlockPos3i(0, 3, 0), "minecraft:oak_log"),
+            ),
+            batchPhase = BlueprintPhaseInput(title = "Structural Frame"),
+        )
+
+        val inspected = service.inspect("cottage")
+        // Empty "scaffold" phase was pruned after ClearBox
+        assertEquals(listOf("foundation_floor", "structural_frame"), inspected.phases.map { it.phaseId })
+        assertEquals(listOf(1, 2), inspected.phases.map { it.order })
+        assertEquals("foundation_floor", inspected.phaseView?.activePhaseId)
+        assertEquals(PhaseViewMode.ISOLATED, inspected.phaseView?.viewMode)
+
+        // Phase 1 needs 9 cobblestone and player has 12 -> 0 missing; Phase 2 needs 3 oak_log -> 3 missing
+        val p1 = inspected.phases[0]
+        val p2 = inspected.phases[1]
+        assertEquals(0, p1.survivalCheck?.missingMaterials?.size)
+        assertEquals(3, p2.survivalCheck?.missingMaterials?.get("minecraft:oak_log"))
+
+        // Reload from disk preserves phases and cursor
+        val reloaded = BlueprintService(catalog = catalog, draftStore = draftStore)
+        assertEquals(1, reloaded.loadPersistedDrafts())
+        val afterReload = reloaded.inspect("cottage")
+        assertEquals(listOf("foundation_floor", "structural_frame"), afterReload.phases.map { it.phaseId })
+        assertEquals("foundation_floor", afterReload.phaseView?.activePhaseId)
+        assertEquals(PhaseViewMode.ISOLATED, afterReload.phaseView?.viewMode)
     }
 }

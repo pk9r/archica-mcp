@@ -1,10 +1,13 @@
 package com.archica.mcp.command
 
+import com.archica.mcp.blueprint.BlueprintPhaseNavigationResult
 import com.archica.mcp.blueprint.BlueprintService
+import com.archica.mcp.blueprint.PhaseViewMode
 import com.archica.mcp.context.ContextCompressionException
 import com.archica.mcp.litematica.LitematicaBridge
 import com.archica.mcp.litematica.LitematicaUnavailableException
 import com.archica.mcp.server.ArchicaMcpServerController
+import com.archica.mcp.ui.ArchicaPhaseScreen
 import com.mojang.brigadier.arguments.IntegerArgumentType
 import com.mojang.brigadier.arguments.StringArgumentType
 import kotlinx.coroutines.CoroutineScope
@@ -16,10 +19,11 @@ import net.minecraft.client.Minecraft
 import net.minecraft.commands.SharedSuggestionProvider
 import net.minecraft.network.chat.Component
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Registers client-side `/archica` commands for inspecting status, controlling the embedded MCP server,
- * toggling opt-in player inventory tracking, and clearing active Archica Litematica placements directly from chat.
+ * toggling opt-in player inventory tracking, navigating build phases, and clearing active Archica placements.
  */
 object ArchicaClientCommands {
     fun register(
@@ -28,6 +32,7 @@ object ArchicaClientCommands {
         litematicaBridge: LitematicaBridge,
         scope: CoroutineScope,
         inventoryEnabled: AtomicBoolean = AtomicBoolean(false),
+        selectedPhasedBlueprintId: AtomicReference<String?> = AtomicReference(null),
         onOpenConfigScreen: (() -> Unit)? = null,
     ) {
         ClientCommandRegistrationCallback.EVENT.register { dispatcher, _ ->
@@ -157,6 +162,82 @@ object ArchicaClientCommands {
                                         1
                                     },
                             ),
+                    )
+                    .then(
+                        ClientCommands.literal("phase")
+                            .executes { ctx ->
+                                handlePhaseList(ctx.source.client, blueprintService, scope, selectedPhasedBlueprintId)
+                                1
+                            }
+                            .then(
+                                ClientCommands.literal("list")
+                                    .executes { ctx ->
+                                        handlePhaseList(ctx.source.client, blueprintService, scope, selectedPhasedBlueprintId)
+                                        1
+                                    },
+                            )
+                            .then(
+                                ClientCommands.literal("next")
+                                    .executes { ctx ->
+                                        handlePhaseAction(ctx.source.client, blueprintService, scope, selectedPhasedBlueprintId) { id ->
+                                            blueprintService.stepPhase(id, 1)
+                                        }
+                                        1
+                                    },
+                            )
+                            .then(
+                                ClientCommands.literal("prev")
+                                    .executes { ctx ->
+                                        handlePhaseAction(ctx.source.client, blueprintService, scope, selectedPhasedBlueprintId) { id ->
+                                            blueprintService.stepPhase(id, -1)
+                                        }
+                                        1
+                                    },
+                            )
+                            .then(
+                                ClientCommands.literal("select")
+                                    .then(
+                                        ClientCommands.argument("blueprint_id", StringArgumentType.word())
+                                            .suggests { _, builder ->
+                                                SharedSuggestionProvider.suggest(blueprintService.sessionIds(), builder)
+                                            }
+                                            .executes { ctx ->
+                                                val bpId = StringArgumentType.getString(ctx, "blueprint_id")
+                                                handlePhaseSelect(ctx.source.client, blueprintService, scope, selectedPhasedBlueprintId, bpId)
+                                                1
+                                            },
+                                    ),
+                            )
+                            .then(
+                                ClientCommands.literal("mode")
+                                    .executes { ctx ->
+                                        handlePhaseAction(ctx.source.client, blueprintService, scope, selectedPhasedBlueprintId) { id ->
+                                            blueprintService.togglePhaseViewMode(id)
+                                        }
+                                        1
+                                    }
+                                    .then(
+                                        ClientCommands.argument("mode", StringArgumentType.word())
+                                            .suggests { _, builder ->
+                                                SharedSuggestionProvider.suggest(listOf("isolated", "cumulative", "all"), builder)
+                                            }
+                                            .executes { ctx ->
+                                                val rawMode = StringArgumentType.getString(ctx, "mode")
+                                                handlePhaseMode(ctx.source.client, blueprintService, scope, selectedPhasedBlueprintId, rawMode)
+                                                1
+                                            },
+                                    ),
+                            )
+                            .then(
+                                ClientCommands.argument("target", StringArgumentType.word())
+                                    .executes { ctx ->
+                                        val target = StringArgumentType.getString(ctx, "target")
+                                        handlePhaseAction(ctx.source.client, blueprintService, scope, selectedPhasedBlueprintId) { id ->
+                                            blueprintService.setActivePhase(id, target)
+                                        }
+                                        1
+                                    },
+                            ),
                     ),
             )
         }
@@ -255,6 +336,126 @@ object ArchicaClientCommands {
                     ChatFormatting.RED,
                 )
             }
+        }
+    }
+
+    private suspend fun resolvePhasedBlueprintId(
+        blueprintService: BlueprintService,
+        selectedPhasedBlueprintId: AtomicReference<String?>,
+    ): String? {
+        val chosen = blueprintService.resolvePhasedBlueprintId(selectedPhasedBlueprintId.get())
+        if (chosen != null) {
+            selectedPhasedBlueprintId.set(chosen)
+        }
+        return chosen
+    }
+
+    private fun handlePhaseList(
+        client: Minecraft,
+        blueprintService: BlueprintService,
+        scope: CoroutineScope,
+        selectedPhasedBlueprintId: AtomicReference<String?>,
+    ) {
+        scope.launch {
+            val targetId = resolvePhasedBlueprintId(blueprintService, selectedPhasedBlueprintId)
+            if (targetId == null) {
+                postFeedback(client, "[Archica] Active blueprints have no build phases.", ChatFormatting.YELLOW)
+                return@launch
+            }
+            runCatching { blueprintService.getPhaseOverview(targetId) }
+                .onSuccess { overview ->
+                    val modeLabel = ArchicaPhaseScreen.formatModeLabel(overview.phaseView.viewMode)
+                    postFeedback(
+                        client,
+                        "[Archica] Phases for '${overview.blueprintId}' (Mode: $modeLabel):",
+                        ChatFormatting.AQUA,
+                    )
+                    for (phase in overview.phases) {
+                        val isActive = phase.phaseId == overview.phaseView.activePhaseId
+                        val prefix = if (isActive) "* " else "  "
+                        val desc = phase.description?.let { " - $it" }.orEmpty()
+                        postFeedback(
+                            client,
+                            "$prefix${phase.order}. ${phase.title} [${phase.phaseId}] (${phase.totalBlocks} blocks)$desc",
+                            if (isActive) ChatFormatting.GREEN else ChatFormatting.GRAY,
+                        )
+                    }
+                }
+                .onFailure { err ->
+                    postFeedback(client, "[Archica] ${err.message ?: err::class.simpleName}", ChatFormatting.RED)
+                }
+        }
+    }
+
+    private fun handlePhaseSelect(
+        client: Minecraft,
+        blueprintService: BlueprintService,
+        scope: CoroutineScope,
+        selectedPhasedBlueprintId: AtomicReference<String?>,
+        blueprintId: String,
+    ) {
+        scope.launch {
+            runCatching { blueprintService.getPhaseOverview(blueprintId) }
+                .onSuccess { overview ->
+                    if (overview.phases.isEmpty()) {
+                        postFeedback(client, "[Archica] Blueprint '$blueprintId' has no build phases.", ChatFormatting.YELLOW)
+                    } else {
+                        selectedPhasedBlueprintId.set(blueprintId)
+                        postFeedback(
+                            client,
+                            "[Archica] Selected phased blueprint '$blueprintId' (${overview.phases.size} phases).",
+                            ChatFormatting.GREEN,
+                        )
+                    }
+                }
+                .onFailure { err ->
+                    postFeedback(client, "[Archica] ${err.message ?: err::class.simpleName}", ChatFormatting.RED)
+                }
+        }
+    }
+
+    private fun handlePhaseMode(
+        client: Minecraft,
+        blueprintService: BlueprintService,
+        scope: CoroutineScope,
+        selectedPhasedBlueprintId: AtomicReference<String?>,
+        rawMode: String,
+    ) {
+        val parsedMode = runCatching { PhaseViewMode.parse(rawMode) }.getOrNull()
+        if (parsedMode == null) {
+            postFeedback(client, "[Archica] Invalid mode '$rawMode': expected isolated, cumulative, or all.", ChatFormatting.RED)
+            return
+        }
+        handlePhaseAction(client, blueprintService, scope, selectedPhasedBlueprintId) { id ->
+            blueprintService.setPhaseViewMode(id, parsedMode)
+        }
+    }
+
+    private fun handlePhaseAction(
+        client: Minecraft,
+        blueprintService: BlueprintService,
+        scope: CoroutineScope,
+        selectedPhasedBlueprintId: AtomicReference<String?>,
+        action: suspend (String) -> BlueprintPhaseNavigationResult,
+    ) {
+        scope.launch {
+            val targetId = resolvePhasedBlueprintId(blueprintService, selectedPhasedBlueprintId)
+            if (targetId == null) {
+                postFeedback(client, "[Archica] Active blueprints have no build phases.", ChatFormatting.YELLOW)
+                return@launch
+            }
+            runCatching { action(targetId) }
+                .onSuccess { nav ->
+                    val summary = "[Archica] [${nav.blueprintId}] Phase ${nav.activePhaseIndex}/${nav.totalPhases}: " +
+                        "${nav.activePhase.title} | ${ArchicaPhaseScreen.formatModeLabel(nav.viewMode)} (${nav.activePhase.totalBlocks} blocks)"
+                    client.execute {
+                        client.player?.sendOverlayMessage(ArchicaPhaseScreen.formatActionBar(nav))
+                        client.player?.sendSystemMessage(Component.literal(summary).withStyle(ChatFormatting.AQUA))
+                    }
+                }
+                .onFailure { err ->
+                    postFeedback(client, "[Archica] ${err.message ?: err::class.simpleName}", ChatFormatting.RED)
+                }
         }
     }
 
